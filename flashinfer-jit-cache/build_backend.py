@@ -145,7 +145,8 @@ def _build_aot_modules():
         DEPS_DIR = os.path.join(JIT_DIR, "..", "3rdparty")
         PATCHES = [
             ("spdlog", "windows_patch_format.patch"),
-            ("cutlass", "windows_patch_stride.patch")
+            ("cutlass", "windows_patch_stride.patch"),
+            ("cccl", "windows_patch_cccl_sal_out.patch"),
         ]
         for dep_dir, patch_file in PATCHES:
             patch_path = os.path.join(JIT_DIR, patch_file)
@@ -156,11 +157,19 @@ def _build_aot_modules():
             if not os.path.isfile(patch_path):
                 print(f"Patch skip {patch_file} (not found)")
                 continue
-            result = subprocess.run(["git", "apply", "--check", patch_path], cwd=dep_path, capture_output=True)
+            result = subprocess.run(
+                ["git", "apply", "--check", "--ignore-space-change", patch_path],
+                cwd=dep_path,
+                capture_output=True,
+            )
             if result.returncode != 0:
                 print(f"Patch already applied or conflict in {dep_dir}, skipping")
                 continue
-            subprocess.run(["git", "apply", patch_path], cwd=dep_path, check=True)
+            subprocess.run(
+                ["git", "apply", "--ignore-space-change", patch_path],
+                cwd=dep_path,
+                check=True,
+            )
             print(f"Patch applied {patch_file}")
 
     # First, ensure AOT modules are compiled

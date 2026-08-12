@@ -1,0 +1,26 @@
+diff --git a/libcudacxx/include/cuda/__ptx/instructions/generated/tcgen05_ld.h b/libcudacxx/include/cuda/__ptx/instructions/generated/tcgen05_ld.h
+--- a/libcudacxx/include/cuda/__ptx/instructions/generated/tcgen05_ld.h
++++ b/libcudacxx/include/cuda/__ptx/instructions/generated/tcgen05_ld.h
+@@ -3,6 +3,12 @@
+ #ifndef _CUDA_PTX_GENERATED_TCGEN05_LD_H_
+ #define _CUDA_PTX_GENERATED_TCGEN05_LD_H_
+ 
++#if defined(_WIN32) && defined(__out)
++#  define _CCCL_RESTORE_WINDOWS_SAL_OUT
++#  pragma push_macro("__out")
++#  undef __out
++#endif
++
+ /*
+ // tcgen05.ld.sync.aligned.16x64b.x1.b32 out, [taddr]; // PTX ISA 86, SM_100a, SM_100f, SM_103a, SM_103f, SM_110a,
+ SM_110f template <typename B32, enable_if_t<sizeof(B32) == 4, bool> = true>
+@@ -11434,4 +11440,9 @@ _CCCL_DEVICE static inline float tcgen05_ld_red_16x32bx2(
+ }
+ #endif // __cccl_ptx_isa >= 880
+ 
++#if defined(_CCCL_RESTORE_WINDOWS_SAL_OUT)
++#  pragma pop_macro("__out")
++#  undef _CCCL_RESTORE_WINDOWS_SAL_OUT
++#endif
++
+ #endif // _CUDA_PTX_GENERATED_TCGEN05_LD_H_
