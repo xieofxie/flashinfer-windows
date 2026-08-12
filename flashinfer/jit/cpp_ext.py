@@ -17,6 +17,7 @@ import torch
 
 from . import env as jit_env
 from ..compilation_context import CompilationContext
+from .utils import write_if_different
 
 is_windows = platform.system() == "Windows"
 logger = logging.getLogger(__name__)
@@ -36,6 +37,43 @@ def get_windows_cuda_bin_path(cuda_home: str) -> str:
     if os.path.exists(arch_bin_path):
         return arch_bin_path
     return os.path.join(cuda_home, "bin")
+
+
+def get_windows_arm64_cuda_compat_include(cuda_home: str) -> Optional[Path]:
+    if not is_windows or get_windows_cuda_arch_dir() != "arm64":
+        return None
+    if get_cuda_version().major != 13:
+        return None
+
+    # CUDA 13 emits ARM64 MSVC stubs that pass CUtensorMap by value, but MSVC
+    # rejects its 128-byte alignment. Shadow cuda.h instead of modifying the toolkit.
+    cuda_header = Path(cuda_home) / "include" / "cuda.h"
+    if not cuda_header.exists():
+        raise FileNotFoundError(f"CUDA header not found: {cuda_header}")
+
+    header_content = cuda_header.read_text(encoding="utf-8")
+    tensor_map_start = header_content.find("typedef struct CUtensorMap_st {")
+    tensor_map_end = header_content.find("} CUtensorMap;", tensor_map_start)
+    if tensor_map_start < 0 or tensor_map_end < 0:
+        raise RuntimeError(f"Could not find CUtensorMap definition in {cuda_header}")
+
+    tensor_map_end += len("} CUtensorMap;")
+    tensor_map_definition = header_content[tensor_map_start:tensor_map_end]
+    patched_definition = tensor_map_definition.replace("alignas(128)", "alignas(64)")
+    patched_definition = patched_definition.replace("_Alignas(128)", "_Alignas(64)")
+    if patched_definition == tensor_map_definition:
+        raise RuntimeError(
+            f"Could not patch CUtensorMap alignment in {cuda_header}"
+        )
+
+    compat_dir = jit_env.FLASHINFER_GEN_SRC_DIR / "windows_arm64_cuda_compat"
+    write_if_different(
+        compat_dir / "cuda.h",
+        header_content[:tensor_map_start]
+        + patched_definition
+        + header_content[tensor_map_end:],
+    )
+    return compat_dir
 
 
 def parse_env_flags(env_var_name) -> List[str]:
@@ -151,6 +189,10 @@ def get_system_includes(cuda_home: str) -> List:
     ]
     system_includes += [p.resolve() for p in jit_env.CUTLASS_INCLUDE_DIRS]
     system_includes.append(jit_env.SPDLOG_INCLUDE_DIR.resolve())
+
+    compat_include = get_windows_arm64_cuda_compat_include(cuda_home)
+    if compat_include is not None:
+        system_includes.insert(0, compat_include.resolve())
 
     if cuda_home == "/usr":
         # NOTE: this will resolve to /usr/include, which will mess up includes. See #1793

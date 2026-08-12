@@ -43,10 +43,51 @@ def test_windows_cuda_bin_path_uses_process_architecture(monkeypatch, tmp_path):
     )
 
 
+def test_windows_arm64_cuda_compat_header_lowers_tensor_map_alignment(
+    monkeypatch, tmp_path
+):
+    cuda_home = tmp_path / "cuda"
+    cuda_header = cuda_home / "include" / "cuda.h"
+    cuda_header.parent.mkdir(parents=True)
+    cuda_header.write_text(
+        """\
+typedef struct CUtensorMap_st {
+#if defined(__cplusplus)
+    alignas(128)
+#else
+    _Alignas(128)
+#endif
+    unsigned long long opaque[16];
+} CUtensorMap;
+"""
+    )
+    monkeypatch.setattr(cpp_ext, "is_windows", True)
+    monkeypatch.setattr(cpp_ext.platform, "machine", lambda: "ARM64")
+    monkeypatch.setattr(cpp_ext, "get_cuda_version", lambda: cpp_ext.Version("13.4"))
+    monkeypatch.setattr(
+        cpp_ext.jit_env, "FLASHINFER_GEN_SRC_DIR", tmp_path / "generated"
+    )
+
+    compat_dir = cpp_ext.get_windows_arm64_cuda_compat_include(str(cuda_home))
+    compat_header = (compat_dir / "cuda.h").read_text()
+
+    assert "alignas(64)" in compat_header
+    assert "_Alignas(64)" in compat_header
+    assert "alignas(128)" not in compat_header
+    original_header = cuda_header.read_text()
+    assert "alignas(128)" in original_header
+    assert "_Alignas(128)" in original_header
+
+
 def test_generate_ninja_uses_arm64_cuda_libraries(monkeypatch, tmp_path):
     monkeypatch.setattr(cpp_ext, "is_windows", True)
     monkeypatch.setattr(cpp_ext.platform, "machine", lambda: "ARM64")
     monkeypatch.setattr(cpp_ext, "get_cuda_path", lambda: "C:\\CUDA\\v13.4")
+    monkeypatch.setattr(
+        cpp_ext,
+        "get_windows_arm64_cuda_compat_include",
+        lambda _cuda_home: tmp_path / "compat",
+    )
     monkeypatch.setattr(cpp_ext.jit_env, "FLASHINFER_JIT_DIR", tmp_path / "jit")
     monkeypatch.setenv("FLASHINFER_CUDA_ARCH_LIST", "12.1a")
 
@@ -60,12 +101,16 @@ def test_generate_ninja_uses_arm64_cuda_libraries(monkeypatch, tmp_path):
     )
 
     assert '"/LIBPATH:$cuda_home\\lib\\arm64"' in ninja
+    assert f'-I"{tmp_path / "compat"}"' in ninja
 
 
 def test_generate_ninja_uses_sccache_compatible_nvcc_depfile_flag(
     monkeypatch, tmp_path
 ):
     monkeypatch.setattr(cpp_ext, "get_cuda_path", lambda: "/usr/local/cuda")
+    monkeypatch.setattr(
+        cpp_ext, "get_windows_arm64_cuda_compat_include", lambda _cuda_home: None
+    )
     monkeypatch.setattr(cpp_ext.jit_env, "FLASHINFER_JIT_DIR", tmp_path / "jit")
     monkeypatch.setenv("FLASHINFER_CUDA_ARCH_LIST", "7.5")
 
