@@ -21,6 +21,23 @@ from ..compilation_context import CompilationContext
 is_windows = platform.system() == "Windows"
 logger = logging.getLogger(__name__)
 
+
+def get_windows_cuda_arch_dir() -> str:
+    machine = platform.machine().lower()
+    if machine in ("arm64", "aarch64"):
+        return "arm64"
+    if machine in ("amd64", "x86_64"):
+        return "x64"
+    raise RuntimeError(f"Unsupported Windows architecture for CUDA: {machine}")
+
+
+def get_windows_cuda_bin_path(cuda_home: str) -> str:
+    arch_bin_path = os.path.join(cuda_home, "bin", get_windows_cuda_arch_dir())
+    if os.path.exists(arch_bin_path):
+        return arch_bin_path
+    return os.path.join(cuda_home, "bin")
+
+
 def parse_env_flags(env_var_name) -> List[str]:
     env_flags = os.environ.get(env_var_name)
     if env_flags:
@@ -282,9 +299,10 @@ def generate_ninja_build_for_op(
         if python_path.endswith("\\Scripts"):
             python_path = os.path.dirname(python_path)
         python_lib_path = os.path.join(sys.base_exec_prefix, "libs")
+        cuda_arch_dir = get_windows_cuda_arch_dir()
         ldflags = [
             f'"/LIBPATH:{python_lib_path}"',
-            '"/LIBPATH:$cuda_home\\lib\\x64"',
+            f'"/LIBPATH:$cuda_home\\lib\\{cuda_arch_dir}"',
             f'"/LIBPATH:{python_path}\\Lib\\site-packages\\tvm_ffi\\lib"',
             f'"/LIBPATH:{python_path}\\Lib\\site-packages\\torch\\lib"',
             "c10.lib",

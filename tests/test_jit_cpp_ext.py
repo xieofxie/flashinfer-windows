@@ -1,5 +1,7 @@
 import subprocess
 
+import pytest
+
 from flashinfer.jit import core, cpp_ext
 
 
@@ -14,6 +16,50 @@ def test_nvcc_parallelism_flags_ignore_sccache_launcher(monkeypatch):
     monkeypatch.setenv("FLASHINFER_NVCC_LAUNCHER", "sccache")
 
     assert cpp_ext.get_nvcc_parallelism_flags() == ["--threads=4"]
+
+
+@pytest.mark.parametrize(
+    ("machine", "expected"),
+    [
+        ("AMD64", "x64"),
+        ("x86_64", "x64"),
+        ("ARM64", "arm64"),
+        ("aarch64", "arm64"),
+    ],
+)
+def test_windows_cuda_arch_dir(monkeypatch, machine, expected):
+    monkeypatch.setattr(cpp_ext.platform, "machine", lambda: machine)
+
+    assert cpp_ext.get_windows_cuda_arch_dir() == expected
+
+
+def test_windows_cuda_bin_path_uses_process_architecture(monkeypatch, tmp_path):
+    (tmp_path / "bin" / "x64").mkdir(parents=True)
+    (tmp_path / "bin" / "arm64").mkdir()
+    monkeypatch.setattr(cpp_ext.platform, "machine", lambda: "ARM64")
+
+    assert cpp_ext.get_windows_cuda_bin_path(str(tmp_path)) == str(
+        tmp_path / "bin" / "arm64"
+    )
+
+
+def test_generate_ninja_uses_arm64_cuda_libraries(monkeypatch, tmp_path):
+    monkeypatch.setattr(cpp_ext, "is_windows", True)
+    monkeypatch.setattr(cpp_ext.platform, "machine", lambda: "ARM64")
+    monkeypatch.setattr(cpp_ext, "get_cuda_path", lambda: "C:\\CUDA\\v13.4")
+    monkeypatch.setattr(cpp_ext.jit_env, "FLASHINFER_JIT_DIR", tmp_path / "jit")
+    monkeypatch.setenv("FLASHINFER_CUDA_ARCH_LIST", "12.1a")
+
+    ninja = cpp_ext.generate_ninja_build_for_op(
+        name="test_module",
+        sources=[tmp_path / "generated" / "kernel.cu"],
+        extra_cflags=None,
+        extra_cuda_cflags=None,
+        extra_ldflags=None,
+        extra_include_dirs=None,
+    )
+
+    assert '"/LIBPATH:$cuda_home\\lib\\arm64"' in ninja
 
 
 def test_generate_ninja_uses_sccache_compatible_nvcc_depfile_flag(

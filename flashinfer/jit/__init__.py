@@ -78,6 +78,7 @@ from .core import sm120a_nvcc_flags as sm120a_nvcc_flags
 from .core import sm120f_nvcc_flags as sm120f_nvcc_flags
 from .core import sm121a_nvcc_flags as sm121a_nvcc_flags
 from .core import current_compilation_context as current_compilation_context
+from .cpp_ext import get_windows_cuda_bin_path
 from .cubin_loader import setup_cubin_loader
 from .comm import gen_comm_alltoall_module as gen_comm_alltoall_module
 from .comm import gen_trtllm_mnnvl_comm_module as gen_trtllm_mnnvl_comm_module
@@ -117,7 +118,7 @@ if platform.system() == "Windows":
         cudart_version = torch.version.cuda.split(".")[0]
         if cudart_version < "12":
             cudart_version += "0"
-        dll_bin_path = os.path.join(cuda_path, "bin", "x64") if os.path.exists(os.path.join(cuda_path, "bin", "x64")) else os.path.join(cuda_path, "bin")
+        dll_bin_path = get_windows_cuda_bin_path(cuda_path)
         ctypes.CDLL(
             os.path.join(dll_bin_path, f"cudart64_{cudart_version}.dll"),
             mode=ctypes.RTLD_GLOBAL,

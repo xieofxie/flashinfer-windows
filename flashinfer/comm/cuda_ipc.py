@@ -24,6 +24,8 @@ from typing import Any, Dict, List, Optional
 import torch.distributed as dist
 from torch.distributed import ProcessGroup
 
+from flashinfer.jit.cpp_ext import get_windows_cuda_bin_path
+
 # NOTE(Zihao): we should use cuda-python instead of ctypes cuda runtime bindings.
 # However, cuda-python's API is not stable yet, so we use ctypes bindings instead.
 # which is copied from vllm codebase.
@@ -67,7 +69,7 @@ def find_loaded_library(lib_name) -> Optional[str]:
             cudart_version = torch_version.cuda.split(".")[0]
             if cudart_version < "12":
                 cudart_version += "0"
-            dll_bin_path = os.path.join(cuda_path, "bin", "x64") if os.path.exists(os.path.join(cuda_path, "bin", "x64")) else os.path.join(cuda_path, "bin")
+            dll_bin_path = get_windows_cuda_bin_path(cuda_path)
             return os.path.join(dll_bin_path, f"cudart64_{cudart_version}.dll")
         else:
             raise ValueError(
