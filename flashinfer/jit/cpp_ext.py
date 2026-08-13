@@ -1,6 +1,7 @@
 # Adapted from https://github.com/pytorch/pytorch/blob/v2.7.0/torch/utils/cpp_extension.py
 
 import functools
+import hashlib
 import logging
 import os
 import platform
@@ -21,6 +22,7 @@ from .utils import write_if_different
 
 is_windows = platform.system() == "Windows"
 logger = logging.getLogger(__name__)
+_WINDOWS_SAFE_DEPFILE_PATH_LENGTH = 240
 
 
 def get_windows_cuda_arch_dir() -> str:
@@ -170,6 +172,16 @@ def get_nvcc_parallelism_flags() -> List[str]:
 
 def join_multiline(vs: List[str]) -> str:
     return " $\n    ".join(vs)
+
+
+def get_object_file_name(source: Path, output_dir: Path) -> str:
+    object_suffix = ".cuda.o" if source.suffix == ".cu" else ".o"
+    object_name = f"{source.parent.name}_{source.stem}{object_suffix}"
+    depfile_path = (output_dir / f"{object_name}.d").resolve()
+    if is_windows and len(str(depfile_path)) >= _WINDOWS_SAFE_DEPFILE_PATH_LENGTH:
+        source_hash = hashlib.sha256(str(source.resolve()).encode()).hexdigest()[:16]
+        object_name = f"obj_{source_hash}{object_suffix}"
+    return object_name
 
 
 def get_cccl_includes() -> List:
@@ -471,9 +483,8 @@ def generate_ninja_build_for_op(
     objects = []
     for source in sources:
         is_cuda = source.suffix == ".cu"
-        object_suffix = ".cuda.o" if is_cuda else ".o"
         cmd = "cuda_compile" if is_cuda else "compile"
-        obj_name = f"{source.parent.name}_{source.stem}{object_suffix}"
+        obj_name = get_object_file_name(source, output_dir)
         obj = str((output_dir / obj_name).resolve()).replace(":\\", "$:\\")
         objects.append(obj)
         source_path = source.resolve()

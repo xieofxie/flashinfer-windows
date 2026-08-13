@@ -106,6 +106,30 @@ def test_generate_ninja_uses_arm64_cuda_libraries(monkeypatch, tmp_path):
     assert "-Xcompiler /bigobj" in ninja
 
 
+def test_windows_object_name_is_shortened_for_long_depfile_path(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setattr(cpp_ext, "is_windows", True)
+    output_dir = tmp_path / ("m" * 40)
+    source = tmp_path / ("s" * 140) / "selective_state_update_kernel_inst.cu"
+
+    object_name = cpp_ext.get_object_file_name(source, output_dir)
+
+    assert object_name.startswith("obj_")
+    assert object_name.endswith(".cuda.o")
+    assert len(str(output_dir / f"{object_name}.d")) < 240
+
+
+def test_windows_object_name_stays_readable_when_path_is_short(monkeypatch, tmp_path):
+    monkeypatch.setattr(cpp_ext, "is_windows", True)
+    source = tmp_path / "generated" / "kernel.cu"
+
+    assert (
+        cpp_ext.get_object_file_name(source, tmp_path / "jit")
+        == "generated_kernel.cuda.o"
+    )
+
+
 def test_generate_ninja_uses_sccache_compatible_nvcc_depfile_flag(
     monkeypatch, tmp_path
 ):
