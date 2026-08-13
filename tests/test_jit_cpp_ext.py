@@ -102,6 +102,8 @@ def test_generate_ninja_uses_arm64_cuda_libraries(monkeypatch, tmp_path):
 
     assert '"/LIBPATH:$cuda_home\\lib\\arm64"' in ninja
     assert f'-I"{tmp_path / "compat"}"' in ninja
+    assert "/bigobj" in ninja
+    assert "-Xcompiler /bigobj" in ninja
 
 
 def test_generate_ninja_uses_sccache_compatible_nvcc_depfile_flag(

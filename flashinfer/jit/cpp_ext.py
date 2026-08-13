@@ -248,6 +248,7 @@ def build_cflags(
         cflags.append("/std:c++20")
         cflags.append("/DNOMINMAX")
         cflags.append("/Zc:preprocessor")
+        cflags.append("/bigobj")
 
     if extra_cflags is not None:
         cflags += extra_cflags
@@ -270,15 +271,16 @@ def build_cuda_cflags(
     cc_env = os.environ.get("CC")
     if cc_env is not None:
         cuda_cflags += ["-ccbin", cc_env]
-    common_cuda_flags  = common_cflags.copy()
+    common_cuda_flags = common_cflags.copy()
 
     if is_windows:
-        common_cuda_flags  = [
+        common_cuda_flags = [
             "-DTORCH_EXTENSION_NAME=$name",
             "--std=c++20",
             "-Xcompiler /Zc:__cplusplus",
-            "-Xcompiler /Zc:preprocessor"
-        ] + common_cuda_flags [1:]
+            "-Xcompiler /Zc:preprocessor",
+            "-Xcompiler /bigobj",
+        ] + common_cuda_flags[1:]
 
     cuda_cflags += [
         "$common_cuda_flags",

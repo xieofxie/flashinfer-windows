@@ -74,6 +74,7 @@ from .jit.gemm import (
     gen_gemm_sm90_module,
     gen_gemm_sm100_module,
     gen_gemm_sm100_module_cutlass_fp4,
+    gen_gemm_sm103_module_cutlass_fp4,
     gen_gemm_sm100_module_cutlass_fp8,
     gen_gemm_sm100_module_cutlass_mxfp8,
     gen_gemm_sm120_module,
@@ -215,7 +216,7 @@ def gen_attention(
     use_sliding_window_: List[bool],
     use_logits_soft_cap_: List[bool],
     has_sm90: bool,
-    has_sm100: bool,
+    has_sm10x: bool,
     add_gemma: bool,
     add_oai_oss: bool,
 ) -> Iterator[JitSpec]:
@@ -342,7 +343,7 @@ def gen_attention(
 
     # fmha_cutlass_sm100a
     # NOTE: currently there's only one uri.
-    if has_sm100:
+    if has_sm10x:
         yield gen_fmha_cutlass_sm100a_module(
             dtype_q=torch.bfloat16,
             dtype_kv=torch.bfloat16,
@@ -375,7 +376,7 @@ def gen_attention(
             )
 
     # MLA SM100
-    if has_sm100:
+    if has_sm10x:
         yield gen_mla_module()
 
 
@@ -387,12 +388,12 @@ def gen_xqa(
     head_grp_size_: List[int],
     use_sliding_window_: List[bool],
     has_sm90: bool,
-    has_sm100: bool,
+    has_sm10x: bool,
     has_sm120: bool,
     has_sm121: bool,
 ) -> Iterator[JitSpec]:
     """Generate XQA modules for various configurations."""
-    if not has_sm90 and not has_sm100 and not has_sm120 and not has_sm121:
+    if not has_sm90 and not has_sm10x and not has_sm120 and not has_sm121:
         return  # XQA requires SM90+
 
     for (
@@ -469,6 +470,7 @@ def gen_all_modules(
     has_sm120 = sm_capabilities.get("sm120", False)
     has_sm120f = sm_capabilities.get("sm120f", False)
     has_sm121 = sm_capabilities.get("sm121", False)
+    has_sm10x = has_sm100 or has_sm103
 
     jit_specs += list(
         gen_attention(
@@ -479,7 +481,7 @@ def gen_all_modules(
             use_sliding_window_,
             use_logits_soft_cap_,
             has_sm90,
-            has_sm100,
+            has_sm10x,
             add_gemma,
             add_oai_oss,
         )
@@ -500,33 +502,31 @@ def gen_all_modules(
         if has_sm100:
             jit_specs.append(gen_fp4_quantization_sm100_module())
             jit_specs.append(gen_cutlass_fused_moe_sm100_module())
-            jit_specs.append(gen_gemm_sm100_module())
             jit_specs.append(gen_gemm_sm100_module_cutlass_fp4())
+        if has_sm10x:
+            jit_specs.append(gen_gemm_sm100_module())
             jit_specs.append(gen_gemm_sm100_module_cutlass_fp8())
             jit_specs.append(gen_gemm_sm100_module_cutlass_mxfp8())
-            # Add TGV GEMM modules for both bf16 and fp16
+            # SM100f is compatible across SM10x and is required for SM103.
+            use_sm_100f = has_sm100f or has_sm103
             jit_specs.append(
-                gen_tgv_gemm_sm10x_module(torch.bfloat16, use_sm_100f=False)
+                gen_tgv_gemm_sm10x_module(torch.bfloat16, use_sm_100f=use_sm_100f)
             )
             jit_specs.append(
-                gen_tgv_gemm_sm10x_module(torch.float16, use_sm_100f=False)
+                gen_tgv_gemm_sm10x_module(torch.float16, use_sm_100f=use_sm_100f)
             )
             jit_specs.append(gen_mxfp8_quantization_sm100_module())
             jit_specs.append(gen_trtllm_gen_gemm_module())
             jit_specs.append(gen_trtllm_low_latency_gemm_module())
             jit_specs.append(gen_trtllm_gen_fused_moe_sm100_module())
-        if has_sm100f:
-            # Add TGV GEMM modules compiled with SM100f flags for both bf16 and fp16
-            jit_specs.append(
-                gen_tgv_gemm_sm10x_module(torch.bfloat16, use_sm_100f=True)
-            )
-            jit_specs.append(gen_tgv_gemm_sm10x_module(torch.float16, use_sm_100f=True))
+        if has_sm100f or has_sm103:
             jit_specs.append(gen_moe_utils_module())
-        if has_sm100 or has_sm103:
+        if has_sm10x:
             jit_specs.append(gen_mm_bf16_cublaslt_module())
         if has_sm103:
             jit_specs.append(gen_fp4_quantization_sm103_module())
             jit_specs.append(gen_cutlass_fused_moe_sm103_module())
+            jit_specs.append(gen_gemm_sm103_module_cutlass_fp4())
         if has_sm110:
             jit_specs.append(gen_fp4_quantization_sm110_module())
         if has_sm120:
@@ -555,7 +555,7 @@ def gen_all_modules(
         )
 
         jit_specs.append(gen_comm_alltoall_module())
-        if has_sm100:
+        if has_sm10x:
             jit_specs.append(gen_trtllm_comm_module())
             jit_specs.append(gen_trtllm_mnnvl_comm_module())
             jit_specs.append(gen_moe_alltoall_module())
@@ -577,7 +577,7 @@ def gen_all_modules(
             gen_topk_module(),
         ]
         # Fused RMSNorm+SiLU: pre-compile all LUT configs (SM100+ only)
-        if has_sm100:
+        if has_sm10x:
             for C in _SUPPORTED_C:
                 for tokens in _SUPPORTED_TOKENS:
                     for dtype in ["bf16", "fp8", "nvfp4"]:
@@ -663,7 +663,7 @@ def gen_all_modules(
                     *dtype_combo, dim, dstate, ntokens, cs_dtype, na_dtype
                 )  # type: ignore[call-arg]
             )
-        if has_sm90 or has_sm100:
+        if has_sm90 or has_sm10x:
             for dtype_combo, dim, dstate, ntokens, cs_dtype, na_dtype in product(
                 _ssu_dtype_combos,
                 _ssu_dims,
@@ -705,7 +705,7 @@ def gen_all_modules(
                 xqa_head_grp_size_,
                 use_sliding_window_,
                 has_sm90,
-                has_sm100,
+                has_sm10x,
                 has_sm120,
                 has_sm121,
             )
