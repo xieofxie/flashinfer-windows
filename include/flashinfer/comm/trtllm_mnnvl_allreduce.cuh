@@ -172,7 +172,7 @@ namespace cg = cooperative_groups;
 
 // PackedType is the one used in kernel for Lamport buffer (LDG.128 or LDG.64)
 template <typename PackedType = float4>
-__device__ struct __attribute__((aligned(32))) LamportFlags {
+struct alignas(32) LamportFlags {
  public:
   __device__ explicit LamportFlags(uint32_t* bufferFlags, uint32_t numStages = 1)
       : mBufferFlagsPtr(bufferFlags), mFlagAccessPtr(&bufferFlags[8]) {
@@ -686,7 +686,7 @@ cudaError_t oneshotAllreduceFusionDispatch(AllReduceFusionParams const& params) 
       .dynamicSmemBytes = 0,
       .stream = params.stream,
       .attrs = attrs,
-      .numAttrs = kSMVersionMajor >= 9 ? 2 : 1,
+      .numAttrs = kSMVersionMajor >= 9 ? 2U : 1U,
   };
 
 #define LAUNCH_ALLREDUCE_KERNEL(WORLD_SIZE, RMSNORM)                                              \
@@ -1134,7 +1134,7 @@ cudaError_t twoshotAllreduceFusionDispatch(AllReduceFusionParams const& params) 
     rnAttrs[1].val.clusterDim.x = 1;
     rnAttrs[1].val.clusterDim.y = rnClusterSize;
     rnAttrs[1].val.clusterDim.z = 1;
-    rnConfig.numAttrs = kSMVersionMajor >= 9 ? 2 : 1;
+    rnConfig.numAttrs = kSMVersionMajor >= 9 ? 2U : 1U;
 
     bool const rnUseCGA = kSMVersionMajor >= 9 && rnClusterSize > 1;
     int const dimPadded = round_up(tokenDim, numEltsPerThread * rnNumThreads);
