@@ -694,7 +694,7 @@ struct Reducer : public Reducer<T, 1, WARPS_M, WARPS_N, USE_CLUSTER, WHOLE_CTA> 
     data = Base::reduce(data, op, warps_m);
 
     if constexpr (USE_CLUSTER) {
-#if (__CUDA_ARCH__ >= 900) && (CUDART_VERSION >= 12080)
+#if 0 && (__CUDA_ARCH__ >= 900) && (CUDART_VERSION >= 12080)
       auto cluster = cooperative_groups::this_cluster();
 
       // NOTE: right now only lane 0 has the valid value so that a intra-warp broadcast is required
@@ -1021,7 +1021,7 @@ struct Stats {
         block_stats_.template compute<isRMSNorm, LDGS, NUM_ELTS>(elts, block_rn, warps_m);
 
     if constexpr (USE_CLUSTER) {
-#if (__CUDA_ARCH__ >= 900) && (CUDART_VERSION >= 12080)
+#if 0 && (__CUDA_ARCH__ >= 900) && (CUDART_VERSION >= 12080)
       auto cluster = cooperative_groups::this_cluster();
 
       // Broadcast local results to other CTAs inside the CGA
