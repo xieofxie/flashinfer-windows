@@ -319,7 +319,8 @@ struct SharedStorageVertical {
   alignas(alignof(PackedAligned<input_t>)) input_t B[dstate];
   alignas(alignof(PackedAligned<input_t>)) input_t C[dstate];
   float out[dim];
-  alignas(128) std::conditional_t<scaleState, state_scale_t, char> state_scale[dim * scaleState];
+  alignas(128) std::conditional_t<scaleState, state_scale_t, char>
+      state_scale[scaleState ? dim : 1];
 
   using barrier_t = cuda::barrier<cuda::thread_scope_block>;
   barrier_t bar_empty[numStages];
@@ -936,7 +937,7 @@ __device__ __forceinline__ void consumer_func_horizontal(
 
         auto const i = iBegin + ii;
 
-        auto* sState_ptr = reinterpret_cast<uint*>(&sram.state[stage][d * colsPerStage + ii]);
+        auto* sState_ptr = reinterpret_cast<uint32_t*>(&sram.state[stage][d * colsPerStage + ii]);
         uint32_t rState = *sState_ptr;
         auto* rState_ptr = reinterpret_cast<state_t*>(&rState);
 
@@ -987,7 +988,7 @@ __device__ __forceinline__ void consumer_func_horizontal(
             conflict_free_column<colsPerStage, stateValuesPerBank, numBanks>(group, baseCol);
         auto const i = iBegin + ii;
 
-        auto* sState_ptr = reinterpret_cast<uint*>(&sram.state[stage][d * colsPerStage + ii]);
+        auto* sState_ptr = reinterpret_cast<uint32_t*>(&sram.state[stage][d * colsPerStage + ii]);
         uint32_t rState = *sState_ptr;
         auto* rState_ptr = reinterpret_cast<state_t*>(&rState);
 
@@ -1291,7 +1292,9 @@ void invokeSelectiveStateUpdate(SelectiveStateUpdateParams& params, SSUAlgorithm
     auto state_tensor =
         tma::buildNdDescriptor(typeid(state_t),
                                /*shapes*/ {DSTATE, DIM, params.nheads, params.state_cache_size},
-                               /*strides*/ {1, DSTATE, DSTATE * DIM, params.state_stride_batch},
+                               /*strides*/
+                               {1, DSTATE, DSTATE * DIM,
+                                static_cast<uint64_t>(params.state_stride_batch)},
                                /*tiles*/ {DSTATE, rowsPerStage, 1, 1}, params.state);
 
     using sram_t = SharedStorageVertical<input_t, weight_t, matrixA_t, state_t, state_scale_t,
@@ -1327,7 +1330,9 @@ void invokeSelectiveStateUpdate(SelectiveStateUpdateParams& params, SSUAlgorithm
       auto state_tensor =
           tma::buildNdDescriptor(typeid(state_t),
                                  /*shapes*/ {DSTATE, DIM, params.nheads, params.state_cache_size},
-                                 /*strides*/ {1, DSTATE, DSTATE * DIM, params.state_stride_batch},
+                                 /*strides*/
+                                 {1, DSTATE, DSTATE * DIM,
+                                  static_cast<uint64_t>(params.state_stride_batch)},
                                  /*tiles*/ {stageCols, DIM, 1, 1}, params.state);
       static_assert(DSTATE % stageCols == 0 && DSTATE >= stageCols);
 
