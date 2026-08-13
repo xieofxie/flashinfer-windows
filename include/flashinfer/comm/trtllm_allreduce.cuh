@@ -193,9 +193,6 @@ struct neg_zero<float> {
 };
 
 template <typename T>
-__device__ static constexpr T neg_zero_v = neg_zero<T>::value;
-
-template <typename T>
 __device__ bool is_negative_zero(T) {
   return false;
 }
