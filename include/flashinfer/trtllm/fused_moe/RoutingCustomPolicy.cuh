@@ -128,7 +128,7 @@ struct SoftmaxPreprocess {
     // Pass 1: block-wide max.  `fmaxf` / `cuda::maximum<>` map to hardware
     // `MAX.F32` and follow IEEE 754 NaN handling — both are used elsewhere in
     // trtllm_backend (e.g. trtllm_fused_moe_dev_kernel.cu).
-    float localMax = -INFINITY;
+    float localMax = NegativeInfinity;
     for (int e = block.thread_rank(); e < numExperts; e += block.size()) {
       float s = static_cast<float>(ptrScores[e]);
       smemBiased[e] = static_cast<SmemT>(s);  // stash raw score for pass 2
@@ -180,7 +180,7 @@ struct SigmoidPreprocess {
 #pragma unroll
     for (int i = 0; i < VecSize; i++) {
       float s = sigmoid_accurate(static_cast<float>(score[i]));
-      score[i] = idx[i] < numExperts ? static_cast<DataType>(s) : DataType{-INFINITY};
+      score[i] = idx[i] < numExperts ? static_cast<DataType>(s) : DataType{NegativeInfinity};
     }
   }
 
@@ -230,7 +230,7 @@ struct SigmoidBiasPreprocess {
     for (int i = 0; i < VecSize; i++) {
       float s = sigmoid_accurate(static_cast<float>(score[i]));
       float bias = idx[i] < numExperts ? loadScalar(params.ptrRoutingBias, idx[i], params.dtypeBias)
-                                       : float{-INFINITY};
+                                       : float{NegativeInfinity};
       score[i] = static_cast<DataType>(s + bias);
     }
   }
@@ -326,7 +326,7 @@ struct SoftmaxPostprocess {
                                                int32_t const (& /*warpTopKExpertIdx*/)[K],
                                                int32_t laneIdx, int32_t topK,
                                                ParamsT const& /*params*/) {
-    DataType minScore = DataType{-INFINITY};
+    DataType minScore = DataType{NegativeInfinity};
     auto softmaxScore =
         calcSoftmax(warp, laneIdx < topK ? warpTopKScore[laneIdx] : minScore, laneIdx, topK);
     if (laneIdx < topK) {
@@ -546,7 +546,7 @@ struct TopKExpertSelect {
                                                int32_t const laneIdx, int32_t const numExperts,
                                                int32_t topK, InputType const* ptrScores,
                                                KP const& params) {
-    DataType minScore = DataType{-INFINITY};
+    DataType minScore = DataType{NegativeInfinity};
     DataType score[VecSize];
     int32_t idx[VecSize];
 
