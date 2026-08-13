@@ -15,3 +15,4 @@ tqdm
 
 build
 wheel
+setuptools<82,>=77
