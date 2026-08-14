@@ -425,8 +425,9 @@ def gen_jit_spec(
         f.startswith("-std=") for f in extra_cuda_cflags
     )
 
-    cflags = ["-Wno-switch-bool"]
-    if not cflags_has_std:
+    is_windows = platform.system() == "Windows"
+    cflags = [] if is_windows else ["-Wno-switch-bool"]
+    if not is_windows and not cflags_has_std:
         cflags.insert(0, "-std=c++17")
 
     cuda_cflags = [
@@ -442,7 +443,7 @@ def gen_jit_spec(
         cuda_cflags.insert(0, "-std=c++17")
 
     if debug:
-        cflags += ["-O0", "-g"]
+        cflags += ["/Od", "/Zi"] if is_windows else ["-O0", "-g"]
         cuda_cflags += [
             "-g",
             "-O0",
@@ -454,7 +455,7 @@ def gen_jit_spec(
     else:
         # non debug mode
         cuda_cflags += ["-DNDEBUG", "-O3"]
-        cflags += ["-DNDEBUG", "-O3"]
+        cflags += ["/DNDEBUG", "/O2"] if is_windows else ["-DNDEBUG", "-O3"]
 
     # useful for ncu source correlation
     if os.environ.get("FLASHINFER_JIT_LINEINFO", "0") == "1":

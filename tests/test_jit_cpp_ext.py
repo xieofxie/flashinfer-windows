@@ -199,9 +199,17 @@ def test_debug_jit_uses_sccache_compatible_nvcc_device_debug_flag(monkeypatch):
     assert "-G" not in spec.extra_cuda_cflags
 
 
-def test_release_jit_propagates_ndebug_to_host_cflags(monkeypatch):
+@pytest.mark.parametrize(
+    ("system", "expected_cflags"),
+    [
+        ("Linux", {"-std=c++17", "-Wno-switch-bool", "-DNDEBUG", "-O3"}),
+        ("Windows", {"/DNDEBUG", "/O2"}),
+    ],
+)
+def test_release_jit_uses_platform_host_cflags(monkeypatch, system, expected_cflags):
     monkeypatch.delenv("FLASHINFER_JIT_DEBUG", raising=False)
     monkeypatch.delenv("FLASHINFER_JIT_VERBOSE", raising=False)
+    monkeypatch.setattr(core.platform, "system", lambda: system)
     monkeypatch.setattr(core, "check_cuda_arch", lambda: None)
     monkeypatch.setattr(core, "get_nvcc_parallelism_flags", lambda: ["--threads=1"])
 
@@ -214,7 +222,7 @@ def test_release_jit_propagates_ndebug_to_host_cflags(monkeypatch):
         extra_include_paths=None,
     )
 
-    assert "-DNDEBUG" in spec.extra_cflags
+    assert set(spec.extra_cflags) == expected_cflags
     assert "-DNDEBUG" in spec.extra_cuda_cflags
 
 
