@@ -266,7 +266,11 @@ class TllmGenFmhaKernel {
     auto sageParamEncode = [](int blockSize) -> int32_t {
       FLASHINFER_CHECK((blockSize & (blockSize - 1)) == 0,
                        "SageAttention block size must be a power of 2.");
-      return blockSize == 0 ? 0 : __builtin_ctz(static_cast<unsigned int>(blockSize));
+      int32_t logBlockSize = 0;
+      for (unsigned int size = static_cast<unsigned int>(blockSize); size > 1; size >>= 1) {
+        ++logBlockSize;
+      }
+      return logBlockSize;
     };
     kernelParams.ptrSageAttnSfsQ = params.ptrSageAttnSfsQ;
     kernelParams.ptrSageAttnSfsK = params.ptrSageAttnSfsK;

@@ -15,6 +15,7 @@ limitations under the License.
 """
 
 import os
+import pathlib
 from itertools import product
 
 import jinja2
@@ -34,6 +35,7 @@ from ..cubin_loader import (
     get_artifact,
     get_meta_hash,
     ensure_symlink,
+    prepare_windows_trtllm_compat_headers,
     verify_symlinked_headers,
 )
 from ..utils import dtype_cutlass_map, filename_safe_dtype_map, write_if_different
@@ -211,10 +213,17 @@ def gen_gemm_sm120_module_cutlass_fp4() -> JitSpec:
         dtype_list = ["__nv_bfloat16", "half"]
         # SM120/121 tile configurations with implied 1x1x1 cluster shape
         cta_m_n_k_list = [
-            (128, 32, 128),
-            (128, 32, 256),
-            (128, 64, 128),
-            (128, 64, 256),
+            # NOTE: 128x32xK and 128x64xK tile sizes are only supported in the dense SM120
+            # blockscaled collective (sm120_blockscaled_mma_tma.hpp), NOT in the grouped/array
+            # variant (sm120_blockscaled_mma_array_tma.hpp). Including them here causes a
+            # compilation failure: the TMA scale factor SmemLayoutAtom collapses to a degenerate
+            # layout with size 0, hitting a static_assert in copy_traits_sm90_tma.hpp:739.
+            # See CUTLASS 4.5.0 changelog: "Add support for 128x32xK and 128x64xK tile sizes
+            # for SM120 blockscaled MMA collective builders" — this only covers dense GEMMs.
+            # (128, 32, 128),
+            # (128, 32, 256),
+            # (128, 64, 128),
+            # (128, 64, 256),
             (128, 128, 128),
             (128, 128, 256),
             (256, 128, 128),
@@ -415,8 +424,15 @@ def gen_gemm_sm120_module_cutlass_mxfp8() -> JitSpec:
         # SM120 tile configs matching CutlassTileConfigSM120 enum entries.
         # ClusterShape is always 1x1x1 for SM120 (no programmatic multicast).
         cta_m_n_k_list = [
-            (128, 32, 128),
-            (128, 64, 128),
+            # NOTE: 128x32xK and 128x64xK tile sizes are only supported in the dense SM120
+            # blockscaled collective (sm120_blockscaled_mma_tma.hpp), NOT in the grouped/array
+            # variant (sm120_blockscaled_mma_array_tma.hpp). Including them here causes a
+            # compilation failure: the TMA scale factor SmemLayoutAtom collapses to a degenerate
+            # layout with size 0, hitting a static_assert in copy_traits_sm90_tma.hpp:739.
+            # See CUTLASS 4.5.0 changelog: "Add support for 128x32xK and 128x64xK tile sizes
+            # for SM120 blockscaled MMA collective builders" — this only covers dense GEMMs.
+            # (128, 32, 128),
+            # (128, 64, 128),
             (128, 128, 128),
             (256, 128, 128),
             (128, 256, 128),
@@ -686,11 +702,13 @@ def gen_trtllm_gen_gemm_module() -> JitSpec:
 
     # Fetch GEMM export headers via get_artifact() and symlink for C++ includes.
     gemm_export_path = f"{include_path}/trtllmGen_gemm_export"
+    export_headers = {}
     for header in GEMM_EXPORT_HEADERS:
         h = get_artifact(
             f"{gemm_export_path}/{header}", get_meta_hash(checksum, header)
         )
         assert h, f"{header} not found"
+        export_headers[header] = h
     symlink_path = (
         jit_env.FLASHINFER_CUBIN_DIR
         / "flashinfer"
@@ -700,6 +718,14 @@ def gen_trtllm_gen_gemm_module() -> JitSpec:
     )
     ensure_symlink(symlink_path, jit_env.FLASHINFER_CUBIN_DIR / gemm_export_path)
     verify_symlinked_headers(symlink_path, GEMM_EXPORT_HEADERS, checksum)
+    compat_include = prepare_windows_trtllm_compat_headers(
+        jit_env.FLASHINFER_GEN_SRC_DIR,
+        pathlib.Path("flashinfer", "trtllm", "gemm", "trtllmGen_gemm_export"),
+        export_headers,
+    )
+    nvcc_flags = current_compilation_context.get_nvcc_flags_list(
+        supported_major_versions=[10]
+    )
 
     return gen_jit_spec(
         "trtllm_gemm",
@@ -712,8 +738,9 @@ def gen_trtllm_gen_gemm_module() -> JitSpec:
             "-DTLLM_ENABLE_CUDA",
             f'-DTLLM_GEN_GEMM_CUBIN_PATH=\\"{ArtifactPath.TRTLLM_GEN_GEMM}\\"',
         ]
-        + sm100a_nvcc_flags,
-        extra_include_paths=[
+        + nvcc_flags,
+        extra_include_paths=([compat_include] if compat_include is not None else [])
+        + [
             jit_env.FLASHINFER_CUBIN_DIR,
             jit_env.FLASHINFER_CUBIN_DIR / include_path,
         ],
@@ -860,11 +887,13 @@ def gen_trtllm_low_latency_gemm_module() -> JitSpec:
 
     # Fetch GEMM export headers via get_artifact() and symlink for C++ includes.
     gemm_export_path = f"{include_path}/trtllmGen_gemm_export"
+    export_headers = {}
     for header in GEMM_EXPORT_HEADERS:
         h = get_artifact(
             f"{gemm_export_path}/{header}", get_meta_hash(checksum, header)
         )
         assert h, f"{header} not found"
+        export_headers[header] = h
     symlink_path = (
         jit_env.FLASHINFER_CUBIN_DIR
         / "flashinfer"
@@ -874,6 +903,14 @@ def gen_trtllm_low_latency_gemm_module() -> JitSpec:
     )
     ensure_symlink(symlink_path, jit_env.FLASHINFER_CUBIN_DIR / gemm_export_path)
     verify_symlinked_headers(symlink_path, GEMM_EXPORT_HEADERS, checksum)
+    compat_include = prepare_windows_trtllm_compat_headers(
+        jit_env.FLASHINFER_GEN_SRC_DIR,
+        pathlib.Path("flashinfer", "trtllm", "gemm", "trtllmGen_gemm_export"),
+        export_headers,
+    )
+    nvcc_flags = current_compilation_context.get_nvcc_flags_list(
+        supported_major_versions=[10]
+    )
 
     return gen_jit_spec(
         "trtllm_low_latency_gemm",
@@ -886,8 +923,9 @@ def gen_trtllm_low_latency_gemm_module() -> JitSpec:
             "-DTLLM_ENABLE_CUDA",
             f'-DTLLM_GEN_GEMM_CUBIN_PATH=\\"{ArtifactPath.TRTLLM_GEN_GEMM}\\"',
         ]
-        + sm100a_nvcc_flags,
-        extra_include_paths=[
+        + nvcc_flags,
+        extra_include_paths=([compat_include] if compat_include is not None else [])
+        + [
             jit_env.FLASHINFER_CUBIN_DIR,
             jit_env.FLASHINFER_CUBIN_DIR / include_path,
         ],

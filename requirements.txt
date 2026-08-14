@@ -1,14 +1,14 @@
-apache-tvm-ffi>=0.1.6,!=0.1.8,!=0.1.8.post0,<0.2
+apache-tvm-ffi>=0.1.6,!=0.1.8,!=0.1.8.post0,<0.2; sys_platform != "win32"
 click
-cuda-tile[tileiras]
+cuda-tile[tileiras]; sys_platform != "win32"
 einops
 ninja
 numpy
-nvidia-cudnn-frontend>=1.13.0
-nvidia-cutlass-dsl>=4.5.0
+nvidia-cudnn-frontend>=1.13.0; sys_platform != "win32"
+nvidia-cutlass-dsl>=4.5.0; sys_platform != "win32"
 nvidia-ml-py
 packaging>=24.2
 requests
 tabulate
-torch
+torch; sys_platform != "win32"
 tqdm

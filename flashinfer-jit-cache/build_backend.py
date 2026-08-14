@@ -121,7 +121,10 @@ def _compile_jit_cache(output_dir: Path, verbose: bool = True):
     from flashinfer import aot
 
     # Set up build directory
-    build_dir = project_root / "build" / "aot"
+    if platform.system() == "Windows":
+        build_dir = Path(f"{os.getenv('SystemDrive')}/_fib/aot")
+    else:
+        build_dir = project_root / "build" / "aot"
 
     # Use the centralized compilation function from aot.py
     aot.compile_and_package_modules(
@@ -135,6 +138,40 @@ def _compile_jit_cache(output_dir: Path, verbose: bool = True):
 
 
 def _build_aot_modules():
+    if platform.system() == "Windows":
+        # cutlass stride.hpp + spdlog format.h patches
+        import subprocess
+        JIT_DIR = os.path.dirname(os.path.abspath(__file__))
+        DEPS_DIR = os.path.join(JIT_DIR, "..", "3rdparty")
+        PATCHES = [
+            ("spdlog", "windows_patch_format.patch"),
+            ("cutlass", "windows_patch_stride.patch"),
+            ("cccl", "windows_patch_cccl_sal_out.patch"),
+        ]
+        for dep_dir, patch_file in PATCHES:
+            patch_path = os.path.join(JIT_DIR, patch_file)
+            dep_path = os.path.join(DEPS_DIR, dep_dir)
+            if not os.path.isdir(dep_path):
+                print(f"Patch skip {dep_dir} (not found)")
+                continue
+            if not os.path.isfile(patch_path):
+                print(f"Patch skip {patch_file} (not found)")
+                continue
+            result = subprocess.run(
+                ["git", "apply", "--check", "--ignore-space-change", patch_path],
+                cwd=dep_path,
+                capture_output=True,
+            )
+            if result.returncode != 0:
+                print(f"Patch already applied or conflict in {dep_dir}, skipping")
+                continue
+            subprocess.run(
+                ["git", "apply", "--ignore-space-change", patch_path],
+                cwd=dep_path,
+                check=True,
+            )
+            print(f"Patch applied {patch_file}")
+
     # First, ensure AOT modules are compiled
     aot_package_dir = Path(__file__).parent / "flashinfer_jit_cache" / "jit_cache"
     aot_package_dir.mkdir(parents=True, exist_ok=True)
@@ -144,11 +181,16 @@ def _build_aot_modules():
         _compile_jit_cache(aot_package_dir)
 
         # Verify that some modules were actually compiled
-        so_files = list(aot_package_dir.rglob("*.so"))
-        if not so_files:
-            raise RuntimeError("No .so files were generated during AOT compilation")
-
-        print(f"Successfully compiled {len(so_files)} AOT modules")
+        if platform.system() == "Windows":
+            dll_files = list(aot_package_dir.rglob("*.dll"))
+            if not dll_files:
+                raise RuntimeError("No .dll files were generated during AOT compilation")
+            print(f"Successfully compiled {len(dll_files)} AOT modules")
+        else:
+            so_files = list(aot_package_dir.rglob("*.so"))
+            if not so_files:
+                raise RuntimeError("No .so files were generated during AOT compilation")
+            print(f"Successfully compiled {len(so_files)} AOT modules")
 
     except Exception as e:
         print(f"Failed to compile AOT modules: {e}")

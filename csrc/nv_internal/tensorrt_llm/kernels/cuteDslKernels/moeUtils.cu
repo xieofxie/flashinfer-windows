@@ -404,6 +404,40 @@ __global__ void moeActivationKernel(InputType const* input, InputType* output,
 }
 
 template <typename InputType>
+using MoeActivationKernelPtr =
+    void (*)(InputType const*, InputType*, int32_t const*, int32_t const*, int32_t, int32_t);
+
+template <typename InputType, int32_t kThreadsPerBlock>
+MoeActivationKernelPtr<InputType> getMoeActivationKernel(MoeActivationType activation_type) {
+  using namespace cutlass_kernels;
+
+  switch (activation_type) {
+    case MoeActivationType::Identity:
+      return &moeActivationKernel<InputType, IdentityAdaptor<cutlass::epilogue::thread::Identity>,
+                                  kThreadsPerBlock>;
+    case MoeActivationType::Gelu:
+      return &moeActivationKernel<InputType, IdentityAdaptor<cutlass::epilogue::thread::GELU>,
+                                  kThreadsPerBlock>;
+    case MoeActivationType::Geglu:
+      return &moeActivationKernel<InputType, GLUAdaptor<cutlass::epilogue::thread::GELU>,
+                                  kThreadsPerBlock>;
+    case MoeActivationType::Relu:
+      return &moeActivationKernel<InputType, IdentityAdaptor<cutlass::epilogue::thread::ReLu>,
+                                  kThreadsPerBlock>;
+    case MoeActivationType::Silu:
+      return &moeActivationKernel<InputType, IdentityAdaptor<cutlass::epilogue::thread::SiLu>,
+                                  kThreadsPerBlock>;
+    case MoeActivationType::Swiglu:
+      return &moeActivationKernel<InputType, GLUAdaptor<cutlass::epilogue::thread::SiLu>,
+                                  kThreadsPerBlock>;
+    default:
+      TLLM_CHECK_WITH_INFO(false, "Unsupported activation type: %d",
+                           static_cast<int>(activation_type));
+      return nullptr;
+  }
+}
+
+template <typename InputType>
 void moeActivation(InputType const* input, InputType* output, int32_t const* tile_idx_to_mn_limit,
                    int32_t const* num_non_exiting_tiles, MoeActivationType activation_type,
                    int32_t const max_num_permuted_tokens, int32_t const interm_size,
@@ -413,37 +447,7 @@ void moeActivation(InputType const* input, InputType* output, int32_t const* til
   TLLM_CHECK_WITH_INFO(interm_size % kElemPerCopy == 0, "interm_size must be divisible by %d.",
                        kElemPerCopy);
 
-  using namespace cutlass_kernels;
-
-  auto get_act_kernel = [](MoeActivationType act_type) -> void (*)(InputType const*, InputType*,
-                                                                   int32_t const*, int32_t const*,
-                                                                   int32_t const, int32_t const) {
-    switch (act_type) {
-      case MoeActivationType::Identity:
-        return &moeActivationKernel<InputType, IdentityAdaptor<cutlass::epilogue::thread::Identity>,
-                                    kThreadsPerBlock>;
-      case MoeActivationType::Gelu:
-        return &moeActivationKernel<InputType, IdentityAdaptor<cutlass::epilogue::thread::GELU>,
-                                    kThreadsPerBlock>;
-      case MoeActivationType::Geglu:
-        return &moeActivationKernel<InputType, GLUAdaptor<cutlass::epilogue::thread::GELU>,
-                                    kThreadsPerBlock>;
-      case MoeActivationType::Relu:
-        return &moeActivationKernel<InputType, IdentityAdaptor<cutlass::epilogue::thread::ReLu>,
-                                    kThreadsPerBlock>;
-      case MoeActivationType::Silu:
-        return &moeActivationKernel<InputType, IdentityAdaptor<cutlass::epilogue::thread::SiLu>,
-                                    kThreadsPerBlock>;
-      case MoeActivationType::Swiglu:
-        return &moeActivationKernel<InputType, GLUAdaptor<cutlass::epilogue::thread::SiLu>,
-                                    kThreadsPerBlock>;
-      default:
-        TLLM_CHECK_WITH_INFO(false, "Unsupported activation type: %d", static_cast<int>(act_type));
-        return nullptr;
-    }
-  };
-
-  auto kernel = get_act_kernel(activation_type);
+  auto kernel = getMoeActivationKernel<InputType, kThreadsPerBlock>(activation_type);
 
   static int32_t const smCount = tensorrt_llm::common::getMultiProcessorCount();
   int32_t const maxBlocksPerSM = getMaxActiveBlocksPerSM(kernel, kThreadsPerBlock, 0);

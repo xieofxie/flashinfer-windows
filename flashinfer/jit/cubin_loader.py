@@ -22,7 +22,7 @@ import random
 from urllib.parse import urljoin
 import shutil
 import time
-from typing import Union
+from typing import Optional, Union
 import uuid
 
 import filelock
@@ -292,6 +292,34 @@ def verify_symlinked_headers(
                 f"This can happen after switching branches. "
                 f"Try clearing the cache: rm -rf {FLASHINFER_CUBIN_DIR}"
             )
+
+
+def _patch_windows_trtllm_header(header: str, content: bytes) -> bytes:
+    if header != "trtllm/gen/CommonUtils.h":
+        return content
+    return content.replace(
+        b"constexpr unsigned long ", b"constexpr unsigned long long "
+    ).replace(b"1UL <<", b"1ULL <<")
+
+
+def prepare_windows_trtllm_compat_headers(
+    output_root: pathlib.Path,
+    include_prefix: pathlib.Path,
+    headers: dict[str, bytes],
+) -> Optional[pathlib.Path]:
+    """Create checksum-independent copies of TensorRT-LLM headers for MSVC."""
+    if os.name != "nt":
+        return None
+
+    compat_root = output_root / "windows_trtllm_header_compat"
+    for header, content in headers.items():
+        destination = compat_root / include_prefix / header
+        patched = _patch_windows_trtllm_header(header, content)
+        if destination.exists() and destination.read_bytes() == patched:
+            continue
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(patched)
+    return compat_root
 
 
 def convert_to_ctypes_char_p(data: bytes):

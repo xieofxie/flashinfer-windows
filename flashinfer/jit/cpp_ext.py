@@ -1,8 +1,10 @@
 # Adapted from https://github.com/pytorch/pytorch/blob/v2.7.0/torch/utils/cpp_extension.py
 
 import functools
+import hashlib
 import logging
 import os
+import platform
 import re
 import subprocess
 import sys
@@ -16,8 +18,64 @@ import torch
 
 from . import env as jit_env
 from ..compilation_context import CompilationContext
+from .utils import write_if_different
 
+is_windows = platform.system() == "Windows"
 logger = logging.getLogger(__name__)
+_WINDOWS_SAFE_DEPFILE_PATH_LENGTH = 240
+
+
+def get_windows_cuda_arch_dir() -> str:
+    machine = platform.machine().lower()
+    if machine in ("arm64", "aarch64"):
+        return "arm64"
+    if machine in ("amd64", "x86_64"):
+        return "x64"
+    raise RuntimeError(f"Unsupported Windows architecture for CUDA: {machine}")
+
+
+def get_windows_cuda_bin_path(cuda_home: str) -> str:
+    arch_bin_path = os.path.join(cuda_home, "bin", get_windows_cuda_arch_dir())
+    if os.path.exists(arch_bin_path):
+        return arch_bin_path
+    return os.path.join(cuda_home, "bin")
+
+
+def get_windows_arm64_cuda_compat_include(cuda_home: str) -> Optional[Path]:
+    if not is_windows or get_windows_cuda_arch_dir() != "arm64":
+        return None
+    if get_cuda_version().major != 13:
+        return None
+
+    # CUDA 13 emits ARM64 MSVC stubs that pass CUtensorMap by value, but MSVC
+    # rejects its 128-byte alignment. Shadow cuda.h instead of modifying the toolkit.
+    cuda_header = Path(cuda_home) / "include" / "cuda.h"
+    if not cuda_header.exists():
+        raise FileNotFoundError(f"CUDA header not found: {cuda_header}")
+
+    header_content = cuda_header.read_text(encoding="utf-8")
+    tensor_map_start = header_content.find("typedef struct CUtensorMap_st {")
+    tensor_map_end = header_content.find("} CUtensorMap;", tensor_map_start)
+    if tensor_map_start < 0 or tensor_map_end < 0:
+        raise RuntimeError(f"Could not find CUtensorMap definition in {cuda_header}")
+
+    tensor_map_end += len("} CUtensorMap;")
+    tensor_map_definition = header_content[tensor_map_start:tensor_map_end]
+    patched_definition = tensor_map_definition.replace("alignas(128)", "alignas(64)")
+    patched_definition = patched_definition.replace("_Alignas(128)", "_Alignas(64)")
+    if patched_definition == tensor_map_definition:
+        raise RuntimeError(
+            f"Could not patch CUtensorMap alignment in {cuda_header}"
+        )
+
+    compat_dir = jit_env.FLASHINFER_GEN_SRC_DIR / "windows_arm64_cuda_compat"
+    write_if_different(
+        compat_dir / "cuda.h",
+        header_content[:tensor_map_start]
+        + patched_definition
+        + header_content[tensor_map_end:],
+    )
+    return compat_dir
 
 
 def parse_env_flags(env_var_name) -> List[str]:
@@ -38,7 +96,7 @@ def parse_env_flags(env_var_name) -> List[str]:
 
 
 def _get_glibcxx_abi_build_flags() -> List[str]:
-    glibcxx_abi_cflags = [
+    glibcxx_abi_cflags = [] if is_windows else [
         "-D_GLIBCXX_USE_CXX11_ABI=" + str(int(torch._C._GLIBCXX_USE_CXX11_ABI))
     ]
     return glibcxx_abi_cflags
@@ -116,6 +174,16 @@ def join_multiline(vs: List[str]) -> str:
     return " $\n    ".join(vs)
 
 
+def get_object_file_name(source: Path, output_dir: Path) -> str:
+    object_suffix = ".cuda.o" if source.suffix == ".cu" else ".o"
+    object_name = f"{source.parent.name}_{source.stem}{object_suffix}"
+    depfile_path = (output_dir / f"{object_name}.d").resolve()
+    if is_windows and len(str(depfile_path)) >= _WINDOWS_SAFE_DEPFILE_PATH_LENGTH:
+        source_hash = hashlib.sha256(str(source.resolve()).encode()).hexdigest()[:16]
+        object_name = f"obj_{source_hash}{object_suffix}"
+    return object_name
+
+
 def get_cccl_includes() -> List:
     """Get vendored CCCL include directories (added with -I for CTK override precedence)."""
     return [p.resolve() for p in jit_env.CCCL_INCLUDE_DIRS]
@@ -133,6 +201,10 @@ def get_system_includes(cuda_home: str) -> List:
     ]
     system_includes += [p.resolve() for p in jit_env.CUTLASS_INCLUDE_DIRS]
     system_includes.append(jit_env.SPDLOG_INCLUDE_DIR.resolve())
+
+    compat_include = get_windows_arm64_cuda_compat_include(cuda_home)
+    if compat_include is not None:
+        system_includes.insert(0, compat_include.resolve())
 
     if cuda_home == "/usr":
         # NOTE: this will resolve to /usr/include, which will mess up includes. See #1793
@@ -159,10 +231,16 @@ def build_common_cflags(
     # Vendored CCCL headers use -I (not -isystem) so they take precedence
     # over the CTK-bundled copy. CCCL headers use #pragma system_header
     # internally to suppress warnings. See https://github.com/NVIDIA/cccl/issues/527
-    for cccl_dir in cccl_includes:
-        common_cflags.append(f"-I{cccl_dir}")
-    for sys_dir in system_includes:
-        common_cflags.append(f"-isystem {sys_dir}")
+    if is_windows:
+        for cccl_dir in cccl_includes:
+            common_cflags.append(f'-I"{str(cccl_dir)}"')
+        for sys_dir in system_includes:
+            common_cflags.append(f'-I"{str(sys_dir)}"')
+    else:
+        for cccl_dir in cccl_includes:
+            common_cflags.append(f"-I{cccl_dir}")
+        for sys_dir in system_includes:
+            common_cflags.append(f"-isystem {sys_dir}")
 
     return common_cflags
 
@@ -174,14 +252,24 @@ def build_cflags(
     """Build C++ compilation flags."""
     cflags = [
         "$common_cflags",
-        "-fPIC",
     ]
+
+    if not is_windows:
+        cflags.append("-fPIC")
+    else:
+        cflags.append("/std:c++20")
+        cflags.append("/DNOMINMAX")
+        cflags.append("/Zc:preprocessor")
+        cflags.append("/bigobj")
+
     if extra_cflags is not None:
         cflags += extra_cflags
 
     env_extra_cflags = parse_env_flags("FLASHINFER_EXTRA_CFLAGS")
     if env_extra_cflags is not None:
         cflags += env_extra_cflags
+
+    cflags = list(set(cflags))
 
     return cflags
 
@@ -195,11 +283,24 @@ def build_cuda_cflags(
     cc_env = os.environ.get("CC")
     if cc_env is not None:
         cuda_cflags += ["-ccbin", cc_env]
+    common_cuda_flags = common_cflags.copy()
+
+    if is_windows:
+        common_cuda_flags = [
+            "-DTORCH_EXTENSION_NAME=$name",
+            "--std=c++20",
+            "-Xcompiler /Zc:__cplusplus",
+            "-Xcompiler /Zc:preprocessor",
+            "-Xcompiler /bigobj",
+        ] + common_cuda_flags[1:]
+
     cuda_cflags += [
-        "$common_cflags",
-        "--compiler-options=-fPIC",
+        "$common_cuda_flags",
         "--expt-relaxed-constexpr",
     ]
+
+    if not is_windows:
+        cuda_cflags.append("--compiler-options=-fPIC")
     cuda_version = get_cuda_version()
     # enable -static-global-template-stub when cuda version >= 12.8
     if cuda_version >= Version("12.8"):
@@ -232,7 +333,7 @@ def build_cuda_cflags(
     if env_extra_cuda_cflags is not None:
         cuda_cflags += env_extra_cuda_cflags
 
-    return cuda_cflags
+    return cuda_cflags, common_cuda_flags
 
 
 def generate_ninja_build_for_op(
@@ -247,28 +348,91 @@ def generate_ninja_build_for_op(
     cuda_home = get_cuda_path()
     common_cflags = build_common_cflags(cuda_home, extra_include_dirs)
     cflags = build_cflags(common_cflags, extra_cflags)
-    cuda_cflags = build_cuda_cflags(common_cflags, extra_cuda_cflags)
+    cuda_cflags, common_cuda_flags = build_cuda_cflags(common_cflags, extra_cuda_cflags)
 
-    ldflags = [
-        "-shared",
-        "-L$cuda_home/lib64",
-        "-L$cuda_home/lib64/stubs",
-        "-lcudart",
-        "-lcuda",
-    ]
+    if is_windows:
+        python_path = os.path.dirname(sys.executable)
+        if python_path.endswith("\\Scripts"):
+            python_path = os.path.dirname(python_path)
+        python_lib_path = os.path.join(sys.base_exec_prefix, "libs")
+        cuda_arch_dir = get_windows_cuda_arch_dir()
+        ldflags = [
+            f'"/LIBPATH:{python_lib_path}"',
+            f'"/LIBPATH:$cuda_home\\lib\\{cuda_arch_dir}"',
+            f'"/LIBPATH:{python_path}\\Lib\\site-packages\\tvm_ffi\\lib"',
+            f'"/LIBPATH:{python_path}\\Lib\\site-packages\\torch\\lib"',
+            "c10.lib",
+            "c10_cuda.lib",
+            "torch.lib",
+            "torch_cuda.lib",
+            "cudart.lib",
+            "cuda.lib",
+            "tvm_ffi.lib",
+            "torch_python.lib"
+        ]
+    else:
+        ldflags = [
+            "-shared",
+            "-L$cuda_home/lib64",
+            "-L$cuda_home/lib64/stubs",
+            "-lcudart",
+            "-lcuda",
+        ]
 
     env_extra_ldflags = parse_env_flags("FLASHINFER_EXTRA_LDFLAGS")
     if env_extra_ldflags is not None:
         ldflags += env_extra_ldflags
 
     if extra_ldflags is not None:
-        ldflags += extra_ldflags
+        if is_windows:
+            for ldflag in extra_ldflags:
+                if ldflag.startswith("-l"):
+                    ldflag = ldflag[2:] + ".lib"
+                ldflags.append(ldflag)
+        else:
+            ldflags += extra_ldflags
 
     cxx = os.environ.get("CXX", "c++")
     nvcc = os.environ.get("FLASHINFER_NVCC", "$cuda_home/bin/nvcc")
+    if is_windows:
+        nvcc = f'"{nvcc}"'
     # Compiler launchers (e.g., sccache, ccache) — empty string when unset
     cxx_launcher = os.environ.get("FLASHINFER_CXX_LAUNCHER", "")
     nvcc_launcher = os.environ.get("FLASHINFER_NVCC_LAUNCHER", "")
+
+    if is_windows:
+        rule_compile = [
+            "rule compile",
+            "  command = cl.exe $cflags -c $in /Fo$out $post_cflags",
+            "  deps = msvc",
+        ]
+        rule_cuda_compile = [
+            "rule cuda_compile",
+            "  command = $nvcc --generate-dependencies-with-compile -MF $out.d $cuda_cflags -c $in -o $out $cuda_post_cflags",
+            "  depfile = $out.d",
+            "  deps = msvc",
+        ]
+        rule_link = [
+            "rule link",
+            "  command = link.exe /DLL $in /nologo $ldflags /out:$out",
+        ]
+    else:
+        rule_compile = [
+            "rule compile",
+            "  command = $cxx_launcher $cxx -MMD -MF $out.d $cflags -c $in -o $out $post_cflags",
+            "  depfile = $out.d",
+            "  deps = gcc",
+        ]
+        rule_cuda_compile = [
+            "rule cuda_compile",
+            "  command = $nvcc_launcher $nvcc --generate-dependencies-with-compile -MF $out.d $cuda_cflags -c $in -o $out $cuda_post_cflags",
+            "  depfile = $out.d",
+            "  deps = gcc",
+        ]
+        rule_link = [
+            "rule link",
+            "  command = $cxx $in $ldflags -o $out",
+        ]
 
     lines = [
         "ninja_required_version = 1.3",
@@ -280,22 +444,18 @@ def generate_ninja_build_for_op(
         f"nvcc_launcher = {nvcc_launcher}",
         "",
         "common_cflags = " + join_multiline(common_cflags),
+        "common_cuda_flags = " + join_multiline(common_cuda_flags),
         "cflags = " + join_multiline(cflags),
         "post_cflags =",
         "cuda_cflags = " + join_multiline(cuda_cflags),
         "cuda_post_cflags =",
         "ldflags = " + join_multiline(ldflags),
         "",
-        "rule compile",
-        "  command = $cxx_launcher $cxx -MMD -MF $out.d $cflags -c $in -o $out $post_cflags",
-        "  depfile = $out.d",
-        "  deps = gcc",
+        *rule_compile,
         "",
-        "rule cuda_compile",
-        "  command = $nvcc_launcher $nvcc --generate-dependencies-with-compile -MF $out.d $cuda_cflags -c $in -o $out $cuda_post_cflags",
-        "  depfile = $out.d",
-        "  deps = gcc",
+        *rule_cuda_compile,
         "",
+
     ]
 
     # Add nvcc linking rule for device code
@@ -310,8 +470,7 @@ def generate_ninja_build_for_op(
     else:
         lines.extend(
             [
-                "rule link",
-                "  command = $cxx $in $ldflags -o $out",
+                *rule_link,
                 "",
             ]
         )
@@ -324,18 +483,25 @@ def generate_ninja_build_for_op(
     objects = []
     for source in sources:
         is_cuda = source.suffix == ".cu"
-        object_suffix = ".cuda.o" if is_cuda else ".o"
         cmd = "cuda_compile" if is_cuda else "compile"
-        obj_name = f"{source.parent.name}_{source.stem}{object_suffix}"
-        obj = str((output_dir / obj_name).resolve())
+        obj_name = get_object_file_name(source, output_dir)
+        obj = str((output_dir / obj_name).resolve()).replace(":\\", "$:\\")
         objects.append(obj)
-        lines.append(f"build {obj}: {cmd} {source.resolve()}")
+        source_path = source.resolve()
+        if is_windows:
+            source_path = str(source_path).replace(":\\", "$:\\")
+        lines.append(f"build {obj}: {cmd} {source_path}")
 
     lines.append("")
     link_rule = "nvcc_link" if needs_device_linking else "link"
-    output_so = str((output_dir / f"{name}.so").resolve())
-    lines.append(f"build {output_so}: {link_rule} " + " ".join(objects))
-    lines.append(f"default {output_so}")
+    if is_windows:
+        output_so = str((output_dir / f"{name}.dll").resolve()).replace(":\\", "$:\\")
+        lines.append(f"build {output_so}: {link_rule} " + " ".join(objects))
+        lines.append(f"default {output_so}")
+    else:
+        output_so = str((output_dir / f"{name}.so").resolve())
+        lines.append(f"build {output_so}: {link_rule} " + " ".join(objects))
+        lines.append(f"default {output_so}")
     lines.append("")
 
     return "\n".join(lines)

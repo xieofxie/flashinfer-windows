@@ -17,6 +17,8 @@ limitations under the License.
 import ctypes
 import functools
 import os
+import platform
+import torch
 
 # Re-export
 from . import cubin_loader
@@ -76,6 +78,7 @@ from .core import sm120a_nvcc_flags as sm120a_nvcc_flags
 from .core import sm120f_nvcc_flags as sm120f_nvcc_flags
 from .core import sm121a_nvcc_flags as sm121a_nvcc_flags
 from .core import current_compilation_context as current_compilation_context
+from .cpp_ext import get_windows_cuda_bin_path
 from .cubin_loader import setup_cubin_loader
 from .comm import gen_comm_alltoall_module as gen_comm_alltoall_module
 from .comm import gen_trtllm_mnnvl_comm_module as gen_trtllm_mnnvl_comm_module
@@ -98,9 +101,39 @@ from .fp4_kv_quantization import (
     gen_fp4_kv_quantization_module as gen_fp4_kv_quantization_module,
 )
 
+if platform.system() == "Windows":
+    cuda_path = None
+    if os.environ.get("CUDA_HOME"):
+        cuda_path = os.environ.get("CUDA_HOME")
+    elif os.environ.get("CUDA_ROOT"):
+        cuda_path = os.environ.get("CUDA_ROOT")
+    elif os.environ.get("CUDA_PATH"):
+        cuda_path = os.environ.get("CUDA_PATH")
+    elif os.environ.get("CUDA_LIB_PATH"):
+        cuda_path = os.path.abspath(os.path.join(os.environ.get("CUDA_LIB_PATH"), '..', '..'))
+    else:
+        cuda_path = f"C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v{torch.version.cuda}"
 
-cuda_lib_path = os.environ.get(
-    "CUDA_LIB_PATH", "/usr/local/cuda/targets/x86_64-linux/lib/"
-)
-if os.path.exists(f"{cuda_lib_path}/libcudart.so.12"):
-    ctypes.CDLL(f"{cuda_lib_path}/libcudart.so.12", mode=ctypes.RTLD_GLOBAL)
+    if cuda_path and os.path.exists(cuda_path):
+        cudart_version = torch.version.cuda.split(".")[0]
+        if cudart_version < "12":
+            cudart_version += "0"
+        dll_bin_path = get_windows_cuda_bin_path(cuda_path)
+        ctypes.CDLL(
+            os.path.join(dll_bin_path, f"cudart64_{cudart_version}.dll"),
+            mode=ctypes.RTLD_GLOBAL,
+        )
+    else:
+        raise ValueError(
+            "CUDA_LIB_PATH is not set. "
+            "CUDA_LIB_PATH need to be set with the absolute path "
+            "to CUDA root folder on Windows (for example, set "
+            "CUDA_LIB_PATH=C:\\CUDA\\v12.4)"
+        )
+else:
+    from .comm import gen_nvshmem_module as gen_nvshmem_module
+    cuda_lib_path = os.environ.get(
+        "CUDA_LIB_PATH", "/usr/local/cuda/targets/x86_64-linux/lib/"
+    )
+    if os.path.exists(f"{cuda_lib_path}/libcudart.so.12"):
+        ctypes.CDLL(f"{cuda_lib_path}/libcudart.so.12", mode=ctypes.RTLD_GLOBAL)

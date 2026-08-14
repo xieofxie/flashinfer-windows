@@ -44,7 +44,7 @@ __forceinline__ __device__ void routingTopKExperts(cg::thread_block_tile<WarpSiz
                                                    int32_t (&warpMaxExpertIdx)[MaxNumTopExperts],
                                                    int32_t const laneIdx, int32_t const numExperts,
                                                    DataType const* ptrScores) {
-  DataType minScore = DataType{-INFINITY};
+  DataType minScore = DataType{NegativeInfinity};
   DataType maxScore = minScore;
   int32_t maxExpertIdx{0};
   using DataTypeVec = std::conditional_t<sizeof(DataType) == 2, float2, float4>;
@@ -83,13 +83,13 @@ __global__ void __launch_bounds__(WarpSize) routingIndicesWarpKernel(KernelParam
   // this is a full table of which token is routed to which expert.
   // the assumption here is that there are no more than 128 experts.
   // we use a stride of 33 instead of 32 to avoid shared memory bank conflicts.
-  __shared__ int32_t __attribute((
-      aligned(128))) smemExpertTokenCountFull[WarpKernelMaxNumTokens][WarpKernelSmemStride];
+  alignas(128) __shared__ int32_t
+      smemExpertTokenCountFull[WarpKernelMaxNumTokens][WarpKernelSmemStride];
   static_assert(WarpKernelSmemStride == WarpSize + 1);
   static_assert(KernelParams::MaxNumExperts / sizeof(int32_t) <= WarpSize);
 
   // values needed for the top-1 reduction, if required
-  InputT minScore = InputT{-INFINITY};
+  InputT minScore = InputT{NegativeInfinity};
   auto block = cg::this_thread_block();
   auto warp = cg::tiled_partition<WarpSize>(block);
 
@@ -328,7 +328,7 @@ __global__ void __cluster_dims__(NumBlocksPerCluster, 1, 1) __launch_bounds__(Nu
   using OutputT = typename KernelParams::OutputT;
   using InputT = typename KernelParams::InputT;
   using TypePacked = PackedScoreIdx<OutputT>;
-  __shared__ TypePacked __attribute((aligned(128))) smemPackedScoreIdx[NumWarps];
+  alignas(128) __shared__ TypePacked smemPackedScoreIdx[NumWarps];
 
   uint32_t const clusterBlockRank = blockIdx.x;
   int32_t const warpIdx = __shfl_sync(0xffffffff, threadIdx.x / WarpSize, 0);
@@ -338,7 +338,7 @@ __global__ void __cluster_dims__(NumBlocksPerCluster, 1, 1) __launch_bounds__(Nu
   auto warpTokenIdx = clusterBlockRank * NumWarps + warpIdx;
   auto scoreOffset = warpTokenIdx * params.mNumExperts;
   bool validToken = warpTokenIdx < params.mNumTokens;
-  InputT minScore = InputT{-INFINITY};
+  InputT minScore = InputT{NegativeInfinity};
 
   auto block = cg::this_thread_block();
   auto warp = cg::tiled_partition<WarpSize>(block);
@@ -414,7 +414,7 @@ __global__ void __launch_bounds__(KernelParams::MaxNumExperts)
   int32_t const warpIdx = threadIdx.x / WarpSize;
   int32_t const globalWarpIdx = blockIdx.x * KernelParams::MaxNumExperts / WarpSize + warpIdx;
   int32_t const globalWarpStride = gridDim.x * KernelParams::MaxNumExperts / WarpSize;
-  InputT minScore = InputT{-INFINITY};
+  InputT minScore = InputT{NegativeInfinity};
   auto block = cg::this_thread_block();
   auto warp = cg::tiled_partition<WarpSize>(block);
 

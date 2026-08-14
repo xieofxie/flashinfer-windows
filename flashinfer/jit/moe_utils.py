@@ -14,6 +14,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
+import pathlib
+
 from . import env as jit_env
 from .core import (
     JitSpec,
@@ -46,6 +48,7 @@ def gen_moe_utils_module() -> JitSpec:
         get_artifact,
         get_meta_hash,
         ensure_symlink,
+        prepare_windows_trtllm_compat_headers,
         verify_symlinked_headers,
     )
     from .fused_moe import BMM_EXPORT_HEADERS
@@ -55,9 +58,11 @@ def gen_moe_utils_module() -> JitSpec:
         f"{ArtifactPath.TRTLLM_GEN_BMM}/checksums.txt", CheckSumHash.TRTLLM_GEN_BMM
     )
     bmm_export_path = f"{ArtifactPath.TRTLLM_GEN_BMM}/include/trtllmGen_bmm_export"
+    export_headers = {}
     for header in BMM_EXPORT_HEADERS:
         h = get_artifact(f"{bmm_export_path}/{header}", get_meta_hash(checksum, header))
         assert h, f"{header} not found"
+        export_headers[header] = h
     symlink_path = (
         jit_env.FLASHINFER_CUBIN_DIR
         / "flashinfer"
@@ -67,6 +72,13 @@ def gen_moe_utils_module() -> JitSpec:
     )
     ensure_symlink(symlink_path, jit_env.FLASHINFER_CUBIN_DIR / bmm_export_path)
     verify_symlinked_headers(symlink_path, BMM_EXPORT_HEADERS, checksum)
+    compat_include = prepare_windows_trtllm_compat_headers(
+        jit_env.FLASHINFER_GEN_SRC_DIR,
+        pathlib.Path(
+            "flashinfer", "trtllm", "batched_gemm", "trtllmGen_bmm_export"
+        ),
+        export_headers,
+    )
     nvcc_flags = [
         "-DTLLM_GEN_EXPORT_INTERFACE",  # Use relative includes in downloaded headers
         "-DENABLE_BF16",
@@ -98,7 +110,8 @@ def gen_moe_utils_module() -> JitSpec:
             / "fused_moe/trtllm_backend/trtllm_fused_moe_routing_common.cu",
         ],
         extra_cuda_cflags=nvcc_flags,
-        extra_include_paths=[
+        extra_include_paths=([compat_include] if compat_include is not None else [])
+        + [
             jit_env.FLASHINFER_CSRC_DIR,
             jit_env.FLASHINFER_CSRC_DIR / "nv_internal",
             jit_env.FLASHINFER_CSRC_DIR / "nv_internal" / "include",

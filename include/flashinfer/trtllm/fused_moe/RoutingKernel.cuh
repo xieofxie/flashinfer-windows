@@ -21,6 +21,7 @@
 
 #include <cub/cub.cuh>
 #include <cute/arch/cluster_sm90.hpp>
+#include <limits>
 #include <type_traits>
 
 #include "RoutingDevKernel.h"
@@ -40,6 +41,7 @@ namespace cg = cooperative_groups;
 
 static constexpr int WarpSize = 32;
 static constexpr int NumBlocksPerCluster = 8;
+static constexpr float NegativeInfinity = -std::numeric_limits<float>::infinity();
 // Performance tuning knob.
 static constexpr int NumEltsPerOffsetTilePerThread = 8;
 // Number of SMs to reserve for overlapping kernels when using cooperative launch.
@@ -138,7 +140,7 @@ template <typename DataType, int VecSize>
 __device__ void calcSoftmax(cg::thread_block_tile<WarpSize> const& warp,
                             DataType (&scores)[VecSize]) {
   // Compute in float to support half/bfloat16 inputs safely.
-  float maxScore = -INFINITY;
+  float maxScore = NegativeInfinity;
   float sumScore = 0.f;
   // Get the max score for each token
 #pragma unroll
@@ -174,7 +176,7 @@ __device__ DataType calcSoftmax(cg::thread_block_tile<WarpSize> const& warp, Dat
   // Compute in float to support half/bfloat16 inputs safely.
   // cg::reduce with cg::greater<T> only supports float/double and integer types;
   // using __nv_bfloat16 or __half directly can generate unsupported redux.sync.max instructions.
-  float maxScore = -INFINITY;
+  float maxScore = NegativeInfinity;
   if (laneIdx < NumTopExperts) {
     float si = static_cast<float>(score);
     maxScore = si >= maxScore ? si : maxScore;
@@ -231,8 +233,8 @@ __device__ void routingPermutation(KernelParams params,
   auto expandedIdxSize = params.mNumTokens * params.mTopK;
 
   // number of experts may exceed number of threads — size by MaxNumExperts
-  __shared__ int32_t __attribute((aligned(128))) smemExpertCount[MaxNumExperts];
-  __shared__ int32_t __attribute((aligned(128))) smemExpertOffset[MaxNumExperts];
+  alignas(128) __shared__ int32_t smemExpertCount[MaxNumExperts];
+  alignas(128) __shared__ int32_t smemExpertOffset[MaxNumExperts];
 
   // pre-fill the counts with 0 — each thread handles ExpertsPerThread experts
 #pragma unroll
@@ -485,7 +487,7 @@ __global__ void __launch_bounds__(KernelParams::MaxNumExperts <= 1024 ? KernelPa
                 "MaxNumExperts must be a multiple of NumThreadsBlock");
 
   // number of experts is bounded by MaxNumExperts (may exceed thread count)
-  __shared__ int32_t __attribute((aligned(128))) smemExpertCount[MaxNumExperts];
+  alignas(128) __shared__ int32_t smemExpertCount[MaxNumExperts];
 
   // For unrolling.
   uint32_t constexpr NumEltsPerThread = 8;
@@ -587,9 +589,9 @@ __global__ void __launch_bounds__(KernelParams::MaxNumExperts <= 1024 ? KernelPa
                 "MaxNumExperts must be a multiple of NumThreadsBlock");
 
   // number of experts — shared memory sized by MaxNumExperts (may exceed thread count)
-  __shared__ int32_t __attribute((aligned(128))) smemExpertOffset[MaxNumExperts];
-  __shared__ int32_t __attribute((aligned(128))) smemExpertCount[MaxNumExperts];
-  __shared__ int32_t __attribute((aligned(128))) smemExpertTileOffset[MaxNumExperts];
+  alignas(128) __shared__ int32_t smemExpertOffset[MaxNumExperts];
+  alignas(128) __shared__ int32_t smemExpertCount[MaxNumExperts];
+  alignas(128) __shared__ int32_t smemExpertTileOffset[MaxNumExperts];
   // BlockScan uses actual thread count; array overload handles ExpertsPerThread items per thread
   using Scan = cub::BlockScan<int32_t, NumThreadsBlock, cub::BLOCK_SCAN_WARP_SCANS>;
   __shared__ typename Scan::TempStorage tempStorage;
@@ -903,8 +905,8 @@ __global__ void __launch_bounds__(KernelParams::MaxNumExperts)
   static constexpr int NumThreads = MaxNumExperts;
   static_assert(MaxNumExperts <= 1024, "Coop kernel requires MaxNumExperts <= 1024");
 
-  __shared__ int32_t __attribute((aligned(128))) smemExpertCount[MaxNumExperts];
-  __shared__ int32_t __attribute((aligned(128))) smemExpertOffset[MaxNumExperts];
+  alignas(128) __shared__ int32_t smemExpertCount[MaxNumExperts];
+  alignas(128) __shared__ int32_t smemExpertOffset[MaxNumExperts];
   // needed for the exclusive sum of token offsets
   using Scan = cub::BlockScan<int32_t, NumThreads, cub::BLOCK_SCAN_WARP_SCANS>;
   __shared__ typename Scan::TempStorage tempStorage;
