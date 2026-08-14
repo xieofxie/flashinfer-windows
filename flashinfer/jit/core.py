@@ -2,6 +2,7 @@ import dataclasses
 import functools
 import logging
 import os
+import platform
 from contextlib import nullcontext
 from datetime import datetime
 from pathlib import Path
@@ -501,7 +502,10 @@ def build_jit_specs(
     for spec in specs:
         if skip_prebuilt and spec.aot_path.exists():
             continue
-        lines.append(f"subninja {spec.ninja_path}")
+        spec_path = spec.ninja_path
+        if platform.system() == "Windows":
+            spec_path = str(spec_path).replace(":\\", "$:\\")
+        lines.append(f"subninja {spec_path}")
         with FileLock(spec.lock_path, thread_local=False):
             spec.write_ninja()
     if not lines:

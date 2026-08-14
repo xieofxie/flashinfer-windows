@@ -1,8 +1,36 @@
 import subprocess
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from flashinfer.jit import core, cpp_ext
+
+
+def test_build_jit_specs_escapes_windows_drive_colon(monkeypatch, tmp_path):
+    captured = {}
+    spec = SimpleNamespace(
+        aot_path=tmp_path / "missing",
+        ninja_path=Path(r"C:\_fib\aot\cached_ops\spdlog\build.ninja"),
+        lock_path=tmp_path / "spec.lock",
+        write_ninja=lambda: None,
+    )
+    monkeypatch.setattr(core.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(core, "FileLock", lambda *_args, **_kwargs: core.nullcontext())
+    monkeypatch.setattr(core, "get_tmpdir", lambda: tmp_path)
+    monkeypatch.setattr(
+        core,
+        "write_if_different",
+        lambda _path, content: captured.setdefault("content", content),
+    )
+    monkeypatch.setattr(core, "run_ninja", lambda *_args, **_kwargs: None)
+
+    core.build_jit_specs([spec], skip_prebuilt=False)
+
+    assert (
+        r"subninja C$:\_fib\aot\cached_ops\spdlog\build.ninja"
+        in captured["content"]
+    )
 
 
 def test_nvcc_parallelism_flags_use_flashinfer_nvcc_threads(monkeypatch):
