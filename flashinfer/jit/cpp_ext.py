@@ -23,6 +23,7 @@ from .utils import write_if_different
 is_windows = platform.system() == "Windows"
 logger = logging.getLogger(__name__)
 _WINDOWS_SAFE_DEPFILE_PATH_LENGTH = 240
+_WINDOWS_SAFE_LIBRARY_NAME_LENGTH = 80
 
 
 def get_windows_cuda_arch_dir() -> str:
@@ -182,6 +183,16 @@ def get_object_file_name(source: Path, output_dir: Path) -> str:
         source_hash = hashlib.sha256(str(source.resolve()).encode()).hexdigest()[:16]
         object_name = f"obj_{source_hash}{object_suffix}"
     return object_name
+
+
+def get_library_file_name(name: str) -> str:
+    # The module directory already provides uniqueness. Repeating a long JIT
+    # name in the DLL filename can exceed link.exe's MAX_PATH limit.
+    if is_windows:
+        if len(name) > _WINDOWS_SAFE_LIBRARY_NAME_LENGTH:
+            return "module.dll"
+        return f"{name}.dll"
+    return f"{name}.so"
 
 
 def get_cccl_includes() -> List:
@@ -494,14 +505,13 @@ def generate_ninja_build_for_op(
 
     lines.append("")
     link_rule = "nvcc_link" if needs_device_linking else "link"
+    output_library = str(
+        (output_dir / get_library_file_name(name)).resolve()
+    )
     if is_windows:
-        output_so = str((output_dir / f"{name}.dll").resolve()).replace(":\\", "$:\\")
-        lines.append(f"build {output_so}: {link_rule} " + " ".join(objects))
-        lines.append(f"default {output_so}")
-    else:
-        output_so = str((output_dir / f"{name}.so").resolve())
-        lines.append(f"build {output_so}: {link_rule} " + " ".join(objects))
-        lines.append(f"default {output_so}")
+        output_library = output_library.replace(":\\", "$:\\")
+    lines.append(f"build {output_library}: {link_rule} " + " ".join(objects))
+    lines.append(f"default {output_library}")
     lines.append("")
 
     return "\n".join(lines)

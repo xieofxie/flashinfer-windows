@@ -203,6 +203,9 @@ FlashInfer's JIT system has three layers:
 | `FLASHINFER_CSRC_DIR` | ✗ No | Read-only source templates |
 | `FLASHINFER_AOT_DIR` | ✗ No | Read-only pre-compiled binaries |
 
+On Windows, modules whose names exceed 80 characters use `module.dll` inside
+their already-unique module directory to stay below `link.exe` path limits.
+
 ### Compilation Context: Architecture-Specific Compilation
 
 FlashInfer uses `CompilationContext` to manage CUDA architecture targets. Some kernels only work on specific GPU architectures (e.g., Hopper SM90, Blackwell SM100/SM12x).

@@ -158,6 +158,24 @@ def test_windows_object_name_stays_readable_when_path_is_short(monkeypatch, tmp_
     )
 
 
+def test_windows_library_name_avoids_repeating_long_module_name(monkeypatch):
+    monkeypatch.setattr(cpp_ext, "is_windows", True)
+
+    assert cpp_ext.get_library_file_name("module_" + "x" * 300) == "module.dll"
+
+
+def test_windows_library_name_stays_readable_when_name_is_short(monkeypatch):
+    monkeypatch.setattr(cpp_ext, "is_windows", True)
+
+    assert cpp_ext.get_library_file_name("test_module") == "test_module.dll"
+
+
+def test_non_windows_library_name_preserves_module_name(monkeypatch):
+    monkeypatch.setattr(cpp_ext, "is_windows", False)
+
+    assert cpp_ext.get_library_file_name("test_module") == "test_module.so"
+
+
 def test_generate_ninja_uses_sccache_compatible_nvcc_depfile_flag(
     monkeypatch, tmp_path
 ):
