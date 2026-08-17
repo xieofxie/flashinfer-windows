@@ -32,15 +32,15 @@ using namespace flashinfer;
                                    ...)                                                           \
   [&]() -> bool {                                                                                 \
     if (scale_granularity_m == 1 && scale_granularity_n == 128 && scale_granularity_k == 128) {   \
-      constexpr int SCALE_GRANULARITY_M = 1;                                                      \
-      constexpr int SCALE_GRANULARITY_N = 128;                                                    \
-      constexpr int SCALE_GRANULARITY_K = 128;                                                    \
+      using SCALE_GRANULARITY_M = std::integral_constant<int, 1>;                                 \
+      using SCALE_GRANULARITY_N = std::integral_constant<int, 128>;                               \
+      using SCALE_GRANULARITY_K = std::integral_constant<int, 128>;                               \
       return __VA_ARGS__();                                                                       \
     } else if (scale_granularity_m == 128 && scale_granularity_n == 128 &&                        \
                scale_granularity_k == 128) {                                                      \
-      constexpr int SCALE_GRANULARITY_M = 128;                                                    \
-      constexpr int SCALE_GRANULARITY_N = 128;                                                    \
-      constexpr int SCALE_GRANULARITY_K = 128;                                                    \
+      using SCALE_GRANULARITY_M = std::integral_constant<int, 128>;                               \
+      using SCALE_GRANULARITY_N = std::integral_constant<int, 128>;                               \
+      using SCALE_GRANULARITY_K = std::integral_constant<int, 128>;                               \
       return __VA_ARGS__();                                                                       \
     }                                                                                             \
     TVM_FFI_ICHECK(false) << "Unsupported scale granularity";                                     \
@@ -50,10 +50,10 @@ using namespace flashinfer;
 #define DISPATCH_MMA_SM(mma_sm, MMA_SM, ...)       \
   [&]() -> bool {                                  \
     if (mma_sm == 1) {                             \
-      constexpr int MMA_SM = 1;                    \
+      using MMA_SM = std::integral_constant<int, 1>; \
       return __VA_ARGS__();                        \
     } else if (mma_sm == 2) {                      \
-      constexpr int MMA_SM = 2;                    \
+      using MMA_SM = std::integral_constant<int, 2>; \
       return __VA_ARGS__();                        \
     }                                              \
     TVM_FFI_ICHECK(false) << "Unsupported MMA SM"; \
@@ -63,10 +63,10 @@ using namespace flashinfer;
 #define DISPATCH_SCALE_MAJOR_K(scale_major_mode, SCALE_MAJOR_K, ...) \
   [&]() -> bool {                                                    \
     if (scale_major_mode == "K") {                                   \
-      constexpr bool SCALE_MAJOR_K = true;                           \
+      using SCALE_MAJOR_K = std::integral_constant<bool, true>;      \
       return __VA_ARGS__();                                          \
     } else if (scale_major_mode == "MN") {                           \
-      constexpr bool SCALE_MAJOR_K = false;                          \
+      using SCALE_MAJOR_K = std::integral_constant<bool, false>;     \
       return __VA_ARGS__();                                          \
     }                                                                \
     TVM_FFI_ICHECK(false) << "Unsupported Scale Major Mode";         \
@@ -116,11 +116,11 @@ void CutlassGemmGroupwiseScaledSM100(TensorView float_workspace_buffer, TensorVi
 
               cudaError_t status;
               // Small-batch-size kernel is not compatible with (scale_granularity_m=128).
-              constexpr bool can_use_small_batch = (SCALE_GRANULARITY_M == 1);
+              constexpr bool can_use_small_batch = (SCALE_GRANULARITY_M::value == 1);
               if (can_use_small_batch && m <= 32) {
                 status = flashinfer::gemm::CutlassGroupwiseScaledGEMMSM100LowLatency<
-                    SCALE_GRANULARITY_M, SCALE_GRANULARITY_N, SCALE_GRANULARITY_K, SCALE_MAJOR_K,
-                    MMA_SM>(
+                    SCALE_GRANULARITY_M::value, SCALE_GRANULARITY_N::value,
+                    SCALE_GRANULARITY_K::value, SCALE_MAJOR_K::value, MMA_SM::value>(
                     static_cast<float*>(float_workspace_buffer.data_ptr()),
                     get_element_size(float_workspace_buffer) * float_workspace_buffer.size(0),
                     static_cast<cutlass_t_in*>(A.data_ptr()),
@@ -129,8 +129,8 @@ void CutlassGemmGroupwiseScaledSM100(TensorView float_workspace_buffer, TensorVi
                     m, n, k, 1, stream);
               } else {
                 status = flashinfer::gemm::CutlassGroupwiseScaledGEMMSM100<
-                    SCALE_GRANULARITY_M, SCALE_GRANULARITY_N, SCALE_GRANULARITY_K, SCALE_MAJOR_K,
-                    MMA_SM>(
+                    SCALE_GRANULARITY_M::value, SCALE_GRANULARITY_N::value,
+                    SCALE_GRANULARITY_K::value, SCALE_MAJOR_K::value, MMA_SM::value>(
                     static_cast<float*>(float_workspace_buffer.data_ptr()),
                     get_element_size(float_workspace_buffer) * float_workspace_buffer.size(0),
                     static_cast<cutlass_t_in*>(A.data_ptr()),

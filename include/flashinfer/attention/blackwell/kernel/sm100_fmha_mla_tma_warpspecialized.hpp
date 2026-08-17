@@ -45,6 +45,7 @@
 namespace cutlass::fmha::kernel {
 
 using namespace cute;
+using cute::Tensor;
 
 template <class TileShape, class Element_, class ElementAcc_, class ElementOut_, class ElementLSE_,
           class TileScheduler,

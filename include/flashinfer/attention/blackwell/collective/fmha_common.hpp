@@ -37,6 +37,7 @@
 namespace cutlass::fmha::collective {
 
 using namespace cute;
+using cute::Tensor;
 
 template <typename MTensor, typename Shape>
 CUTLASS_DEVICE auto get_local_tile_tensor(const MTensor& m_tensor, const Shape& tile_shape,

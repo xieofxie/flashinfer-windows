@@ -139,13 +139,14 @@ def _compile_jit_cache(output_dir: Path, verbose: bool = True):
 
 def _build_aot_modules():
     if platform.system() == "Windows":
-        # cutlass stride.hpp + spdlog format.h patches
+        # Dependency compatibility patches for MSVC/Windows.
         import subprocess
         JIT_DIR = os.path.dirname(os.path.abspath(__file__))
         DEPS_DIR = os.path.join(JIT_DIR, "..", "3rdparty")
         PATCHES = [
             ("spdlog", "windows_patch_format.patch"),
             ("cutlass", "windows_patch_stride.patch"),
+            ("cutlass", "windows_patch_tensor.patch"),
             ("cccl", "windows_patch_cccl_sal_out.patch"),
         ]
         for dep_dir, patch_file in PATCHES:

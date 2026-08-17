@@ -38,6 +38,7 @@
 namespace cutlass::fmha::kernel {
 
 using namespace cute;
+using cute::Tensor;
 template <class ElementOut, class ElementAcc, class ElementScale, size_t kNumHeads,
           size_t kHeadDimLatent, int kMaxSplits>
 struct Sm100FmhaMlaReductionKernel {

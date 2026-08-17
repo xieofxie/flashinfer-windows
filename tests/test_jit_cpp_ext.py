@@ -224,6 +224,10 @@ def test_release_jit_uses_platform_host_cflags(monkeypatch, system, expected_cfl
 
     assert set(spec.extra_cflags) == expected_cflags
     assert "-DNDEBUG" in spec.extra_cuda_cflags
+    if system == "Windows":
+        assert "-std=c++17" not in spec.extra_cuda_cflags
+    else:
+        assert "-std=c++17" in spec.extra_cuda_cflags
 
 
 def test_debug_jit_does_not_propagate_ndebug(monkeypatch):

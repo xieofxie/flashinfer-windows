@@ -439,7 +439,7 @@ def gen_jit_spec(
         "-DFLASHINFER_ENABLE_FP8_E4M3",
         "-DFLASHINFER_ENABLE_FP8_E5M2",
     ]
-    if not cuda_cflags_has_std:
+    if not is_windows and not cuda_cflags_has_std:
         cuda_cflags.insert(0, "-std=c++17")
 
     if debug:

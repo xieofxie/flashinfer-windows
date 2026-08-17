@@ -24,10 +24,12 @@ using tvm::ffi::Optional;
 #define DISPATCH_mask_mode(mask_mode, MASK_MODE, ...)   \
   [&]() -> bool {                                       \
     if (mask_mode == MaskMode::kNone) {                 \
-      constexpr MaskMode MASK_MODE = MaskMode::kNone;   \
+      using MASK_MODE =                                  \
+          std::integral_constant<MaskMode, MaskMode::kNone>; \
       return __VA_ARGS__();                             \
     } else if (mask_mode == MaskMode::kCausal) {        \
-      constexpr MaskMode MASK_MODE = MaskMode::kCausal; \
+      using MASK_MODE =                                  \
+          std::integral_constant<MaskMode, MaskMode::kCausal>; \
       return __VA_ARGS__();                             \
     }                                                   \
     return false;                                       \
@@ -36,16 +38,16 @@ using tvm::ffi::Optional;
 #define DISPATCH_head_dim(head_dim_qk, head_dim_vo, HEAD_DIM_QK, HEAD_DIM_VO, ...) \
   [&]() -> bool {                                                                  \
     if (head_dim_qk == 192 && head_dim_vo == 128) {                                \
-      constexpr int HEAD_DIM_QK = 192;                                             \
-      constexpr int HEAD_DIM_VO = 128;                                             \
+      using HEAD_DIM_QK = cute::Int<192>;                                          \
+      using HEAD_DIM_VO = cute::Int<128>;                                          \
       return __VA_ARGS__();                                                        \
     } else if (head_dim_qk == 128 && head_dim_vo == 128) {                         \
-      constexpr int HEAD_DIM_QK = 128;                                             \
-      constexpr int HEAD_DIM_VO = 128;                                             \
+      using HEAD_DIM_QK = cute::Int<128>;                                          \
+      using HEAD_DIM_VO = cute::Int<128>;                                          \
       return __VA_ARGS__();                                                        \
     } else if (head_dim_qk == 64 && head_dim_vo == 64) {                           \
-      constexpr int HEAD_DIM_QK = 64;                                              \
-      constexpr int HEAD_DIM_VO = 64;                                              \
+      using HEAD_DIM_QK = cute::Int<64>;                                           \
+      using HEAD_DIM_VO = cute::Int<64>;                                           \
       return __VA_ARGS__();                                                        \
     }                                                                              \
     return false;                                                                  \
@@ -115,12 +117,13 @@ void FMHACutlassSM100Run(ffi::TensorView workspace_buffer, ffi::TensorView q, ff
     using cutlass_type_out = cutlass_dtype_t<DTypeOut>;
     using TILE_Q = _256;
     using TILE_KV = _128;
-    using D_QK = cute::Int<HEAD_DIM_QK>;
-    using D_VO = cute::Int<HEAD_DIM_VO>;
+    using D_QK = HEAD_DIM_QK;
+    using D_VO = HEAD_DIM_VO;
     using TileShapeQK = Shape<TILE_Q, TILE_KV, D_QK>;
     using TileShapePV = Shape<TILE_Q, D_VO, TILE_KV>;
     using CutlassMaskMode =
-        typename std::conditional<MASK_MODE == MaskMode::kCausal, CausalMask, ResidualMask>::type;
+        typename std::conditional<MASK_MODE::value == MaskMode::kCausal, CausalMask,
+                                  ResidualMask>::type;
     auto status = run_fmha_fwd<cutlass_type_in, cutlass_type_out, int32_t, TileShapeQK, TileShapePV,
                                CutlassMaskMode>(
         workspace_buffer.data_ptr(), static_cast<cutlass_type_in*>(q.data_ptr()),

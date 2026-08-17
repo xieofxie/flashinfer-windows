@@ -1,0 +1,14 @@
+diff --git a/include/cutlass/gemm/collective/sm100_mma_warpspecialized.hpp b/include/cutlass/gemm/collective/sm100_mma_warpspecialized.hpp
+--- a/include/cutlass/gemm/collective/sm100_mma_warpspecialized.hpp
++++ b/include/cutlass/gemm/collective/sm100_mma_warpspecialized.hpp
+@@ -365,8 +365,8 @@
+     auto ptr_A = recast_ptr<TmaInternalElementA>(args.ptr_A);
+     auto ptr_B = recast_ptr<TmaInternalElementB>(args.ptr_B);
+ 
+-    Tensor tensor_a = make_tensor(ptr_A, make_layout(make_shape(M,K,L), args.dA));
+-    Tensor tensor_b = make_tensor(ptr_B, make_layout(make_shape(N,K,L), args.dB));
++    cute::Tensor tensor_a = make_tensor(ptr_A, make_layout(make_shape(M,K,L), args.dA));
++    cute::Tensor tensor_b = make_tensor(ptr_B, make_layout(make_shape(N,K,L), args.dB));
+ 
+     auto cluster_shape = cutlass::detail::select_cluster_shape(ClusterShape{}, hw_info.cluster_shape);
+ 
