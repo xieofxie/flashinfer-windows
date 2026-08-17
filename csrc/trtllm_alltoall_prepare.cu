@@ -315,7 +315,7 @@ class PacketPipeline {
     packetId++;
     if (packetId < PipelineConfig::PACKET_PER_STEP) {
       return acquireNewStep
-                 ? bufferBase +
+                 ? (uint8_t*)bufferBase +
                        step * PipelineConfig::PACKET_PER_STEP * PipelineConfig::PACKET_SIZE +
                        packetId * PipelineConfig::PACKET_SIZE
                  : nullptr;
@@ -334,7 +334,8 @@ class PacketPipeline {
     if (acquireNewStep) {
       step = *(shared_new_step);
       packetId = 0;
-      return bufferBase + step * PipelineConfig::PACKET_SIZE * PipelineConfig::PACKET_PER_STEP;
+      return (uint8_t*)bufferBase +
+             step * PipelineConfig::PACKET_SIZE * PipelineConfig::PACKET_PER_STEP;
     }
 
     return nullptr;
@@ -349,7 +350,8 @@ class PacketPipeline {
   __device__ __inline__ void* getNewRecvPacket() {
     packetId++;
     if (packetId < PipelineConfig::PACKET_PER_STEP) {
-      return bufferBase + step * PipelineConfig::PACKET_PER_STEP * PipelineConfig::PACKET_SIZE +
+      return (uint8_t*)bufferBase +
+             step * PipelineConfig::PACKET_PER_STEP * PipelineConfig::PACKET_SIZE +
              packetId * PipelineConfig::PACKET_SIZE;
     }
 
@@ -365,8 +367,8 @@ class PacketPipeline {
     __syncthreads();
     packetId = 0;
     step = *(shared_new_step);
-    void* packetPtr =
-        bufferBase + step * PipelineConfig::PACKET_SIZE * PipelineConfig::PACKET_PER_STEP;
+    void* packetPtr = (uint8_t*)bufferBase +
+                      step * PipelineConfig::PACKET_SIZE * PipelineConfig::PACKET_PER_STEP;
 
     return packetPtr;
   }
@@ -439,7 +441,8 @@ __global__ void allToAllMetadataDevice(int* sendExperts, int* recvExperts, float
           if (sendScales != nullptr) {
             *((ScaleType*)(scales)) =
                 *(ScaleType*)(sendScales + tokenId * topK + groupId * PipelineConfig::UNIT_SIZE);
-            float* scaleBasePtr = (float*)(packPtr + PipelineConfig::SCALE_OFFSET);
+            float* scaleBasePtr =
+                (float*)((uint8_t*)packPtr + PipelineConfig::SCALE_OFFSET);
             float* scalesPtr = (float*)(scaleBasePtr) + threadIdx.x * PipelineConfig::UNIT_SIZE;
             *((ScaleType*)(scalesPtr)) = *((ScaleType*)(scales));
           }
@@ -447,7 +450,8 @@ __global__ void allToAllMetadataDevice(int* sendExperts, int* recvExperts, float
       } else if (localExpertStatics != nullptr) {
         int staticCopyIdx = threadIdx.x - UNIT_PER_ITER;
         if (staticCopyBase + staticCopyIdx * 4 < expertCount) {
-          int4* staticBasePtr = (int4*)(packPtr + PipelineConfig::STATIC_COPY_OFFSET);
+          int4* staticBasePtr =
+              (int4*)((uint8_t*)packPtr + PipelineConfig::STATIC_COPY_OFFSET);
           int4 staticData = *(int4*)(localExpertStatics + staticCopyBase + staticCopyIdx * 4);
           *(staticBasePtr + staticCopyIdx) = staticData;
         }
@@ -484,7 +488,8 @@ __global__ void allToAllMetadataDevice(int* sendExperts, int* recvExperts, float
           *dstExpertsPtr = *((ExpertType*)(experts));
 
           if (recvScales != nullptr) {
-            float* scaleBasePtr = (float*)(packetPtr + PipelineConfig::SCALE_OFFSET);
+            float* scaleBasePtr =
+                (float*)((uint8_t*)packetPtr + PipelineConfig::SCALE_OFFSET);
             float* scalesPtr = scaleBasePtr + threadIdx.x * PipelineConfig::UNIT_SIZE;
             *((ScaleType*)(scales)) = *((ScaleType*)(scalesPtr));
             ScaleType* dstScalesPtr =
@@ -495,7 +500,8 @@ __global__ void allToAllMetadataDevice(int* sendExperts, int* recvExperts, float
       } else if (localExpertStatics != nullptr) {
         int staticCopyIdx = threadIdx.x - UNIT_PER_ITER;
         if (staticCopyBase + staticCopyIdx * 4 < expertCount) {
-          int4* staticBasePtr = (int4*)(packetPtr + PipelineConfig::STATIC_COPY_OFFSET);
+          int4* staticBasePtr =
+              (int4*)((uint8_t*)packetPtr + PipelineConfig::STATIC_COPY_OFFSET);
           int4 staticData = *(staticBasePtr + staticCopyIdx);
           *(int4*)(gatheredExpertStatics + targetRankId * expertCount + staticCopyBase +
                    staticCopyIdx * 4) = staticData;
