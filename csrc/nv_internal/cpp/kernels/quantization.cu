@@ -121,44 +121,70 @@ void dispatchSFLayout(QuantizationSFLayout layout, Fn&& fn) {
 template <typename Fn>
 void dispatchNVFP44Over6Config(std::false_type, bool disableFP4QuantFastMath, NVFP44Over6ErrMode,
                                bool, int, Fn&& fn) {
-  dispatchBool(disableFP4QuantFastMath, [&](auto disableFP4QuantFastMathTag) {
-    fn(disableFP4QuantFastMathTag, std::false_type{});
-  });
+  if (disableFP4QuantFastMath) {
+    fn(std::true_type{}, std::false_type{});
+  } else {
+    fn(std::false_type{}, std::false_type{});
+  }
+}
+
+// CUDA 13.4 on Windows emits malformed LLVM IR for the 4over6 specialization set.
+#if !defined(_WIN32)
+template <bool DISABLE_FP4_QUANT_FAST_MATH, int E4M3_MAX, NVFP44Over6ErrMode ERR_MODE,
+          typename Fn>
+void dispatchNVFP44Over6ErrFastMath(bool errUseFastMath, Fn& fn) {
+  if (errUseFastMath) {
+    fn(std::bool_constant<DISABLE_FP4_QUANT_FAST_MATH>{},
+       NVFP44Over6Config<E4M3_MAX, ERR_MODE, true>{});
+  } else {
+    fn(std::bool_constant<DISABLE_FP4_QUANT_FAST_MATH>{},
+       NVFP44Over6Config<E4M3_MAX, ERR_MODE, false>{});
+  }
+}
+
+template <bool DISABLE_FP4_QUANT_FAST_MATH, int E4M3_MAX, typename Fn>
+void dispatchNVFP44Over6ErrMode(NVFP44Over6ErrMode errMode, bool errUseFastMath, Fn& fn) {
+  switch (errMode) {
+    case NVFP44Over6ErrMode::MAE:
+      dispatchNVFP44Over6ErrFastMath<DISABLE_FP4_QUANT_FAST_MATH, E4M3_MAX,
+                                     NVFP44Over6ErrMode::MAE>(errUseFastMath, fn);
+      break;
+    case NVFP44Over6ErrMode::MSE:
+      dispatchNVFP44Over6ErrFastMath<DISABLE_FP4_QUANT_FAST_MATH, E4M3_MAX,
+                                     NVFP44Over6ErrMode::MSE>(errUseFastMath, fn);
+      break;
+    default:
+      TLLM_CHECK_WITH_INFO(false, "Unsupported NVFP4 4over6 error mode.");
+  }
+}
+
+template <bool DISABLE_FP4_QUANT_FAST_MATH, typename Fn>
+void dispatchNVFP44Over6E4M3Max(int e4m3Max, NVFP44Over6ErrMode errMode, bool errUseFastMath,
+                                Fn& fn) {
+  if (e4m3Max == 256) {
+    dispatchNVFP44Over6ErrMode<DISABLE_FP4_QUANT_FAST_MATH, 256>(errMode, errUseFastMath, fn);
+  } else {
+    TLLM_CHECK_WITH_INFO(e4m3Max == 448, "Unsupported NVFP4 4over6 E4M3 max.");
+    dispatchNVFP44Over6ErrMode<DISABLE_FP4_QUANT_FAST_MATH, 448>(errMode, errUseFastMath, fn);
+  }
 }
 
 template <typename Fn>
 void dispatchNVFP44Over6Config(std::true_type, bool disableFP4QuantFastMath,
                                NVFP44Over6ErrMode errMode, bool errUseFastMath, int e4m3Max,
                                Fn&& fn) {
-  dispatchBool(disableFP4QuantFastMath, [&](auto disableFP4QuantFastMathTag) {
-    auto launchWithE4M3Max = [&](auto e4m3MaxTag) {
-      auto launchWithErrMode = [&](auto errModeTag) {
-        dispatchBool(errUseFastMath, [&](auto errUseFastMathTag) {
-          fn(disableFP4QuantFastMathTag,
-             NVFP44Over6Config<decltype(e4m3MaxTag)::value, decltype(errModeTag)::value,
-                               decltype(errUseFastMathTag)::value>{});
-        });
-      };
-      switch (errMode) {
-        case NVFP44Over6ErrMode::MAE:
-          return launchWithErrMode(
-              std::integral_constant<NVFP44Over6ErrMode, NVFP44Over6ErrMode::MAE>{});
-        case NVFP44Over6ErrMode::MSE:
-          return launchWithErrMode(
-              std::integral_constant<NVFP44Over6ErrMode, NVFP44Over6ErrMode::MSE>{});
-        default:
-          TLLM_CHECK_WITH_INFO(false, "Unsupported NVFP4 4over6 error mode.");
-      }
-    };
-
-    if (e4m3Max == 256) {
-      launchWithE4M3Max(std::integral_constant<int, 256>{});
-    } else {
-      TLLM_CHECK_WITH_INFO(e4m3Max == 448, "Unsupported NVFP4 4over6 E4M3 max.");
-      launchWithE4M3Max(std::integral_constant<int, 448>{});
-    }
-  });
+  if (disableFP4QuantFastMath) {
+    dispatchNVFP44Over6E4M3Max<true>(e4m3Max, errMode, errUseFastMath, fn);
+  } else {
+    dispatchNVFP44Over6E4M3Max<false>(e4m3Max, errMode, errUseFastMath, fn);
+  }
 }
+#else
+template <typename Fn>
+void dispatchNVFP44Over6Config(std::true_type, bool, NVFP44Over6ErrMode, bool, int, Fn&&) {
+  TLLM_CHECK_WITH_INFO(false, "NVFP4 4over6 is not supported on Windows.");
+}
+#endif
 
 template <BlockScaleQuantizationType QUANTIZATION_TYPE, int SF_VEC_SIZE, typename Fn>
 void dispatchFP4KernelConfig(bool useUE8M0, bool useRowWiseScale, bool use4Over6, bool inverseScale,

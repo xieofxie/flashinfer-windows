@@ -514,6 +514,16 @@ def _get_num_workers() -> Optional[int]:
     return None
 
 
+def _get_ninja_env() -> dict:
+    env = os.environ.copy()
+    if is_windows and env.get("FLASHINFER_JIT_WARNINGS", "0") != "1":
+        env["_CL_"] = f"{env.get('_CL_', '')} /w".strip()
+        env["NVCC_APPEND_FLAGS"] = (
+            f"{env.get('NVCC_APPEND_FLAGS', '')} -w -Xcompiler=/w".strip()
+        )
+    return env
+
+
 def run_ninja(workdir: Path, ninja_file: Path, verbose: bool) -> None:
     workdir.mkdir(parents=True, exist_ok=True)
     command = [
@@ -538,6 +548,7 @@ def run_ninja(workdir: Path, ninja_file: Path, verbose: bool) -> None:
             cwd=str(workdir.resolve()),
             check=True,
             text=True,
+            env=_get_ninja_env(),
         )
     except subprocess.CalledProcessError as e:
         msg = "Ninja build failed."

@@ -293,19 +293,22 @@ struct Sm90ScatterPtrArray {
     using CopyOpR2GRed = decltype(get_reduction_op<ElementOutput, MaxVecSize>());
     using CopyOpR2GStg = UniversalCopy<uint_bit_t<Copy_Atom<CopyOpR2GRed,ElementOutput>::NumValSrc * sizeof_bits_v<ElementOutput>>>;
 
+    constexpr int EpiTileM = CUTE_STATIC_V(size<0>(EpilogueTile{}));
+    constexpr int EpiTileN = CUTE_STATIC_V(size<1>(EpilogueTile{}));
+
     auto make_tiled_r2g = [&](auto copy_op)
     {
       using CopyAtomR2G = Copy_Atom<decltype(copy_op),ElementOutput>;
       constexpr int VecSize = CopyAtomR2G::NumValSrc;
       if constexpr (cutlass::gemm::detail::is_k_major<StrideOutput>()) {
-        constexpr int ThreadsMajor = size<1>(args.epi_tile) / VecSize;
+        constexpr int ThreadsMajor = EpiTileN / VecSize;
         constexpr int ThreadsMinor = NumThreads / ThreadsMajor;
         return make_tiled_copy(CopyAtomR2G{},
           Layout<Shape<Int<ThreadsMinor>, Int<ThreadsMajor>>, Stride<Int<ThreadsMajor>, _1>>{},
           Layout<Shape<_1, Int<VecSize>>>{});
       }
       else if constexpr (cutlass::gemm::detail::is_mn_major<StrideOutput>()) {
-        constexpr int ThreadsMajor = size<0>(args.epi_tile) / VecSize;
+        constexpr int ThreadsMajor = EpiTileM / VecSize;
         constexpr int ThreadsMinor = NumThreads / ThreadsMajor;
         return make_tiled_copy(CopyAtomR2G{},
           Layout<Shape<Int<ThreadsMajor>, Int<ThreadsMinor>>, Stride<_1, Int<ThreadsMajor>>>{},

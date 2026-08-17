@@ -200,16 +200,21 @@ def test_debug_jit_uses_sccache_compatible_nvcc_device_debug_flag(monkeypatch):
 
 
 @pytest.mark.parametrize(
-    ("system", "expected_cflags"),
+    ("system", "machine", "expected_cflags"),
     [
-        ("Linux", {"-std=c++17", "-Wno-switch-bool", "-DNDEBUG", "-O3"}),
-        ("Windows", {"/DNDEBUG", "/O2"}),
+        ("Linux", "x86_64", {"-std=c++17", "-Wno-switch-bool", "-DNDEBUG", "-O3"}),
+        ("Windows", "AMD64", {"/DNDEBUG", "/O2"}),
+        ("Windows", "ARM64", {"/DNDEBUG", "/O2"}),
     ],
 )
-def test_release_jit_uses_platform_host_cflags(monkeypatch, system, expected_cflags):
+def test_release_jit_uses_platform_host_cflags(
+    monkeypatch, system, machine, expected_cflags
+):
     monkeypatch.delenv("FLASHINFER_JIT_DEBUG", raising=False)
     monkeypatch.delenv("FLASHINFER_JIT_VERBOSE", raising=False)
+    monkeypatch.delenv("FLASHINFER_JIT_WARNINGS", raising=False)
     monkeypatch.setattr(core.platform, "system", lambda: system)
+    monkeypatch.setattr(core.platform, "machine", lambda: machine)
     monkeypatch.setattr(core, "check_cuda_arch", lambda: None)
     monkeypatch.setattr(core, "get_nvcc_parallelism_flags", lambda: ["--threads=1"])
 
@@ -272,6 +277,49 @@ def test_run_ninja_uses_max_jobs(monkeypatch, tmp_path):
             "8",
         ]
     ]
+
+
+def test_run_ninja_suppresses_windows_warnings_without_changing_commands(
+    monkeypatch, tmp_path
+):
+    captured = {}
+
+    def fake_run(command, **kwargs):
+        captured["command"] = command
+        captured["env"] = kwargs["env"]
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(cpp_ext, "is_windows", True)
+    monkeypatch.delenv("FLASHINFER_JIT_WARNINGS", raising=False)
+    monkeypatch.setenv("_CL_", "/DTEST")
+    monkeypatch.setenv("NVCC_APPEND_FLAGS", "-DTEST")
+    monkeypatch.setattr(cpp_ext.subprocess, "run", fake_run)
+
+    cpp_ext.run_ninja(tmp_path, tmp_path / "build.ninja", verbose=False)
+
+    assert "/w" not in captured["command"]
+    assert "-w" not in captured["command"]
+    assert captured["env"]["_CL_"] == "/DTEST /w"
+    assert captured["env"]["NVCC_APPEND_FLAGS"] == "-DTEST -w -Xcompiler=/w"
+
+
+def test_run_ninja_can_enable_windows_warnings(monkeypatch, tmp_path):
+    captured = {}
+
+    def fake_run(command, **kwargs):
+        captured["env"] = kwargs["env"]
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(cpp_ext, "is_windows", True)
+    monkeypatch.setenv("FLASHINFER_JIT_WARNINGS", "1")
+    monkeypatch.setenv("_CL_", "/DTEST")
+    monkeypatch.setenv("NVCC_APPEND_FLAGS", "-DTEST")
+    monkeypatch.setattr(cpp_ext.subprocess, "run", fake_run)
+
+    cpp_ext.run_ninja(tmp_path, tmp_path / "build.ninja", verbose=False)
+
+    assert captured["env"]["_CL_"] == "/DTEST"
+    assert captured["env"]["NVCC_APPEND_FLAGS"] == "-DTEST"
 
 
 def test_jit_spec_build_rewrites_ninja_before_build(monkeypatch):

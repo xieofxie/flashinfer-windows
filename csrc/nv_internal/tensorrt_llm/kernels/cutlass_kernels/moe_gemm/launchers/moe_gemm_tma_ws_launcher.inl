@@ -61,10 +61,22 @@ using EpilogueFusion = TmaWarpSpecializedGroupedGemmInput::EpilogueFusion;
 // functions
 template <bool FLAG, class ReturnType, class... Args>
 std::decay_t<ReturnType> construct_if_true(Args&&... args) {
+  using Result = std::decay_t<ReturnType>;
   if constexpr (FLAG) {
-    return ReturnType{std::forward<Args>(args)...};
+    if constexpr (std::is_constructible_v<Result, Args...>) {
+      return Result{std::forward<Args>(args)...};
+    } else if constexpr (sizeof...(Args) == 1) {
+      return Result{
+          /* alpha */ 1.0f,
+          /* beta */ 0.0f,
+          /* alpha_ptr */ nullptr,
+          /* beta_ptr */ nullptr,
+          /* alpha_ptr_array */ (std::forward<Args>(args), ...)};
+    } else {
+      return Result{std::forward<Args>(args)...};
+    }
   } else {
-    return ReturnType{};
+    return Result{};
   }
 }
 
