@@ -25,6 +25,95 @@ FlashInfer Windows build & kernels. This repository will be updated when new ver
 
 **Don't request a wheel for your specific environment.** Currently, the only wheels I will publish are for Python 3.12 + CUDA 12.4 + torch 2.6.0. If you have another versions, build your own wheel from source by following the instructions below.
 
+### Changes from upstream FlashInfer 0.6.12
+
+This branch is based on the upstream `v0.6.12` release and carries a focused
+Windows compatibility patch set. The upstream CUDA kernels and Python APIs are
+preserved unless a Windows compiler or runtime difference requires a targeted
+change.
+
+#### Windows JIT and AOT build support
+
+- **MSVC-compatible host flags:** Windows builds use `/O2`, `/DNDEBUG`, and
+  `/bigobj` instead of passing GCC-only flags such as `-O3`,
+  `-Wno-switch-bool`, and host `-std=c++17` to `cl.exe`. NVCC continues to use
+  the CUDA flags required by each kernel, including C++20 where needed.
+- **Architecture-aware CUDA paths:** CUDA executables and import libraries are
+  selected from `bin\x64`/`lib\x64` or `bin\arm64`/`lib\arm64` based on the
+  current process architecture.
+- **Windows DLL loading:** JIT modules and CUDA runtime libraries are loaded as
+  `.dll` files. CUDA is discovered through `CUDA_HOME`, `CUDA_ROOT`,
+  `CUDA_PATH`, or `CUDA_LIB_PATH`, with the standard NVIDIA installation path
+  used as a fallback.
+- **Short build paths:** JIT output defaults to `C:\_fij`, while AOT compilation
+  uses `C:\_fib\aot`. Long object names are replaced with stable hashed names,
+  and long JIT module names use `module.dll` inside their already-unique module
+  directory. These changes avoid common `MAX_PATH`, NVCC depfile, and
+  `link.exe` path failures.
+- **Valid Ninja files on Windows:** Drive-letter colons are escaped in aggregate
+  `subninja` entries, and generated object, library, and dependency paths use
+  Windows-safe formatting.
+- **AOT wheel packaging:** The JIT-cache backend recognizes and packages
+  compiled `.dll` modules, copies the actual library name recorded by each JIT
+  specification, and keeps AOT output outside deeply nested source paths.
+- **Compiler warning control:** MSVC and NVCC warnings are suppressed by default
+  during Windows JIT builds without modifying Ninja command lines. Set
+  `FLASHINFER_JIT_WARNINGS=1` to show them.
+
+#### Windows ARM64 and CUDA compatibility
+
+- Added native Windows ARM64 JIT/AOT path and library selection.
+- Added an isolated CUDA compatibility include for Windows ARM64 toolchains
+  that cannot pass a 128-byte-aligned `CUtensorMap` by value. The original CUDA
+  installation header is not modified by JIT compilation.
+- Added MSVC-compatible template dispatch and qualified CuTe/CUTLASS symbols in
+  Blackwell FMHA, MLA, grouped GEMM, and MoE sources.
+- Added compatibility copies of downloaded TensorRT-LLM headers. On Windows,
+  constants that exceed 32-bit `unsigned long` use explicit 64-bit
+  `unsigned long long` types and `ULL` literals.
+- The Windows AOT builder applies the included CCCL, CUTLASS, and spdlog
+  compatibility patches when their upstream sources still require them.
+- Added a local PyTorch extension utility header so Windows extensions do not
+  depend on ELF weak-symbol module initialization.
+
+#### Kernel and backend fixes
+
+| Area | Windows-specific change |
+|------|-------------------------|
+| cuDNN SDPA | Uses byte-addressed pointer arithmetic for packed TMA descriptors and portable CUDA host/device attributes. |
+| XQA | Restores MSVC-compatible tuple access and includes the required standard headers in MHA and MLA translation units. |
+| Fused QK RMSNorm + RoPE | Replaces compiler-specific integer aliases and builtins with portable types and constant expressions accepted by NVCC/MSVC. |
+| TensorRT-LLM all-to-all | Performs offsets through `uint8_t*` instead of arithmetic on `void*`, which MSVC rejects. |
+| CUTLASS/TensorRT-LLM MoE | Uses explicit function-pointer dispatch where nested compile-time lambdas trigger Windows CUDA compiler failures. |
+| CUDA 13 NVFP4 | Avoids malformed Windows CUDA 13.4 code generation in NVFP4 quantization and grouped MoE dispatch. NVFP4 `4over6` remains disabled on Windows. |
+| SM103 AOT | Includes the SM10x attention, GEMM, TensorRT-LLM, MoE, quantization, and communication modules required by SM103 builds, including SM103 FP4 GEMM. |
+| SM120 grouped GEMM | Excludes unsupported `128x32xK` and `128x64xK` grouped block-scaled tile configurations that fail CUTLASS layout validation. |
+| POD/attention and Mamba | Adds MSVC/CUDA portability fixes for template dispatch, integer operations, vector types, and selective-state-update kernels. |
+
+#### Python dependencies and runtime behavior
+
+- Packages that do not currently provide usable Windows distributions
+  (`apache-tvm-ffi`, `cuda-tile`, `nvidia-cudnn-frontend`, and
+  `nvidia-cutlass-dsl`) are excluded by Windows environment markers in
+  `requirements.txt`.
+- PyTorch is also excluded from automatic Windows dependency resolution so the
+  CUDA-matched PyTorch build can be installed explicitly before FlashInfer.
+- CUDA IPC locates `cudart` through the Windows CUDA installation rather than
+  Linux `/proc/self/maps`.
+- NVSHMEM JIT generation remains Linux-only and is not exported on Windows.
+
+#### Regression coverage
+
+The patch set adds tests for:
+
+- Windows x64 and ARM64 CUDA directory selection.
+- ARM64 CUDA compatibility-header generation without modifying `cuda.h`.
+- MSVC release/debug flags and optional warning output.
+- Shortened object and DLL names for long JIT paths.
+- Escaped Windows drive letters in aggregate AOT Ninja files.
+- Windows TensorRT-LLM header compatibility rewriting.
+- SM103 module inclusion in AOT generation.
+
 ### Windows instructions:
 
 #### Installing an existing release wheel:
